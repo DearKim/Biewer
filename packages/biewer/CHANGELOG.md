@@ -30,10 +30,14 @@ This package follows [Semantic Versioning](https://semver.org/).
   - **DICOM** (`decode/dicom.ts`): 비압축 Explicit/Implicit VR LE, 멀티프레임, W/L·spacing 메타. 압축(JPEG-LS/2000, transfer syntax .4.x)은 `DECODE_FAILED`로 명시 거부(코덱은 후속).
   - **mp4** (`decode/video.ts`): blob URL + video seek 프레임 샘플링(같은 출처 → canvas 비-taint).
   - **Archive** (`decode/archive.ts` + `bytes.ts`): gz(`DecompressionStream`)·zip(EOCD 스캔 + `deflate-raw`) 언랩 후 내부 포맷 재판별(`.nii.gz` 포함). 이미지 zip = N-frame 스택.
-  - `DecodeContext.axis` 추가, 뷰가 볼륨 축을 디코더로 전달. 헤드리스에서 실제 원격 데이터(NiiVue nii.gz·pydicom dcm·MDN mp4·이미지 zip) 디코드+렌더 확인.
+  - `DecodeContext.axis` 추가, 뷰가 볼륨 축을 디코더로 전달. 헤드리스에서 실제 원격 데이터(NiiVue nii.gz·pydicom dcm·OHIF 임상 cine mp4·이미지 zip) 디코드+렌더 확인.
+- **Window/Level (CPU LUT).** gray8/16/float32 프레임을 표준 DICOM W/L 램프로 RGBA 변환(`canvas2d`).
+  로드 시 기본 window 산출(DICOM 메타 우선, 없으면 중간 슬라이스 min/max), `window-level` 도구가 데이터 범위에 맞춰 드래그로 조절, `reset`이 기본값 복귀. (GPU/WebGL W/L 경로는 후속 perf 최적화.)
+- **NIfTI 3축 리샘플 + orientation.** axial/coronal/sagittal 을 물리 extent(`dim·spacing`) 기준 nearest-neighbour 로 등방 픽셀에 리샘플(비등방 볼륨 종횡비 교정) + sform/qform 으로 축별 flip 정규화. float64 datatype 추가.
+- **영상 URL 스트리밍.** mp4/webm URL 은 통째 다운로드 대신 `crossOrigin=anonymous` 진행형 스트림(대용량 임상 cine 실용적); webm sniff 추가. 볼륨/cine 은 로드 시 중간 프레임에서 시작.
 
 ### 후속 (미구현 — 스텁/계획)
 
-- DICOM 압축 코덱(JPEG-LS/2000, WASM), 볼륨 3축 정확 리샘플(현재 인덱스 기반), animated 이미지 프레임화
-- gray 볼륨 WebGL W/L 경로(현재 Canvas 2D 프레임별 min/max 정규화), 디코딩 Web Worker 오프로드
-- 측정 세트 렌더·편집·undo/redo (M4)
+- DICOM 압축 코덱: JPEG-LS(진행 중), JPEG2000/RLE/Baseline
+- gray 볼륨 WebGL(GPU) W/L 경로(현재 CPU LUT), 디코딩 Web Worker 오프로드, animated 이미지 프레임화
+- 볼륨 오블리크 reslice(현재 직교 3축), 측정 세트 렌더·편집·undo/redo (M4)

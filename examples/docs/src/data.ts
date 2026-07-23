@@ -11,7 +11,8 @@ export type FmtLabel = 'NIfTI' | 'DICOM' | 'MP4' | 'PNG' | 'ZIP';
 const NIIVUE = 'https://niivue.github.io/niivue-demo-images';
 const PYDICOM = 'https://raw.githubusercontent.com/pydicom/pydicom/main/src/pydicom/data/test_files';
 const PYDATA = 'https://raw.githubusercontent.com/pydicom/pydicom-data/master/data_store/data';
-const MDN = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos';
+// OHIF/Cornerstone sample clinical cine (ultrasound-style), CORS-enabled, streamed.
+const MED_MP4 = 'https://ohif-assets.s3.us-east-2.amazonaws.com/video/rendered.mp4';
 const IMG_STACK = ['/samples/img1.png', '/samples/img2.png', '/samples/img3.png'];
 
 export interface Series {
@@ -31,7 +32,7 @@ export const SERIES: Series[] = [
   // current study (rail)
   { id: 's1', title: 'Brain MR (MNI152)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 190, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${NIIVUE}/mni152.nii.gz` } },
   { id: 's2', title: 'MR — multiframe', modality: 'MR · DICOM', fmt: 'DICOM', hueBase: 30, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${PYDATA}/emri_small.dcm` } },
-  { id: 's3', title: 'Flower (cine)', modality: 'Video · mp4', fmt: 'MP4', hueBase: 320, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${MDN}/flower.mp4` } },
+  { id: 's3', title: 'Ultrasound cine', modality: 'Video · mp4', fmt: 'MP4', hueBase: 320, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: MED_MP4 } },
   { id: 's4', title: 'Perfusion (pCASL)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 100, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${NIIVUE}/pcasl.nii.gz` } },
   // prior study (rail, follow-up)
   { id: 'p1', title: 'Brain MR (T1)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 205, study: 'prior', date: '2026-01-12', rail: true, source: { kind: 'url', url: `${NIIVUE}/chris_t1.nii.gz` } },
@@ -122,7 +123,7 @@ export const EXAMPLES: Example[] = [
   // --- Output modes ---
   { id: 'slice', category: 'Output modes', title: 'Slice scroll', desc: 'Manual frame navigation (wheel / scrollbar / keyboard), rAF-coalesced.', kind: 'output', rows: 1, cols: 1, series: ['s1'], mode: 'slice' },
   { id: 'cine', category: 'Output modes', title: 'Cine (auto play)', desc: 'Auto-advance frames — play / pause / stop and speed. Works on volumes and video.', kind: 'output', rows: 1, cols: 1, series: ['s2'], mode: 'auto' },
-  { id: 'video', category: 'Output modes', title: 'Video (mp4)', desc: 'A real mp4 (MDN CC0) sampled to frames; scroll to seek or play as cine.', kind: 'output', rows: 1, cols: 1, series: ['s3'], mode: 'auto', format: 'mp4' },
+  { id: 'video', category: 'Output modes', title: 'Video (mp4)', desc: 'A real clinical cine mp4 (OHIF sample), streamed and sampled to frames; scroll to seek or play as cine.', kind: 'output', rows: 1, cols: 1, series: ['s3'], mode: 'auto', format: 'mp4' },
   { id: 'sync-frames', category: 'Output modes', title: 'Frame-synced views', desc: 'One PlaybackController bound to many views keeps frames in sync.', kind: 'output', rows: 1, cols: 2, series: ['s1', 'p1'], mode: 'slice' },
 
   // --- Compare ---

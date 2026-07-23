@@ -24,6 +24,18 @@ const state = {
 const cellCount = () => state.grid.rows * state.grid.cols;
 let nudgedMiddle = false; // whether we've jumped a freshly-loaded volume to its middle slice
 
+/** Volumes/cine open on the MIDDLE frame (frame 0 is often an empty edge slice).
+ *  Fires once per example/placement, as soon as a source's frameCount is known —
+ *  driven by the playback subscription so it works for both fresh and kept views. */
+function maybeNudgeMiddle(): void {
+  if (nudgedMiddle) return;
+  const s = playback.getState();
+  if (s.frameCount > 2) {
+    nudgedMiddle = true;
+    playback.setFrame(Math.floor(s.frameCount / 2));
+  }
+}
+
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 function el(tag: string, cls?: string, html?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -202,7 +214,7 @@ function applyExample(ex: Example): void {
   renderRight();
   renderToolbar();
   renderComments();
-  void rebuildStage();
+  void rebuildStage().then(maybeNudgeMiddle); // kept views already know their frameCount
 }
 
 // ---- right rail ----
@@ -248,7 +260,7 @@ function afterPlacement(): void {
   renderLeft();
   renderRight();
   renderComments();
-  void rebuildStage();
+  void rebuildStage().then(maybeNudgeMiddle);
 }
 
 // ---- toolbar (Tools only; layout is NOT a plugin tool) ----
@@ -454,16 +466,8 @@ function renderCell(cell: HTMLElement, i: number): void {
   const view = document.createElement('biewer-view') as BiewerViewElement;
   view.tools = tools;
   view.playback = playback;
-  // volumes: start on the MIDDLE slice (frame 0 is often an empty edge slice) —
-  // one nudge per example/placement so the first paint shows real anatomy.
-  view.addEventListener('bw-source-ready', (e) => {
-    const info = (e as CustomEvent).detail as { frameCount: number };
-    if (!nudgedMiddle && info.frameCount > 2 && playback.getState().frame === 0) {
-      nudgedMiddle = true;
-      playback.setFrame(Math.floor(info.frameCount / 2));
-    }
-    updatePlayback(playback.getState());
-  });
+  // a freshly-decoded source reports frameCount here → jump volumes to mid-slice
+  view.addEventListener('bw-source-ready', () => maybeNudgeMiddle());
   cell.appendChild(view);
   void realizeSeries(s).then((rs) => {
     if (cell.dataset.seriesId !== id) return; // cell changed again before decode finished

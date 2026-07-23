@@ -20,6 +20,7 @@ import { injectStyles } from './styles';
 import { acquire } from './format/acquire';
 import { sniff } from './format/sniff';
 import { resolveDecoder } from './decode/registry';
+import { videoUrlFrameSource, isVideoUrl } from './decode/video';
 import { registerBuiltins } from './decode/builtins';
 import { createCanvas2DRenderer } from './render/canvas2d';
 
@@ -51,6 +52,7 @@ export function createBiewerView(el: HTMLElement, options: BiewerViewOptions): B
   let source: FrameSource | null = null;
   let currentFrame = options.defaultFrame ?? options.frame ?? 0;
   let axis: VolumeAxis = options.axis ?? 'native';
+  let autoWindow: { wc: number; ww: number } | undefined; // default W/L for the current source (gray)
   let disposed = false;
   let loadToken = 0;
   let renderToken = 0;
@@ -114,6 +116,23 @@ export function createBiewerView(el: HTMLElement, options: BiewerViewOptions): B
     else setFrameInternal(index);
   }
 
+  /** Default window/level for a gray source: DICOM carries one; otherwise sample
+   *  the middle slice's min/max. rgba (image/video) needs no windowing. */
+  async function computeAutoWindow(fs: FrameSource): Promise<{ wc: number; ww: number } | undefined> {
+    if (fs.pixelType === 'rgba8') return undefined;
+    if (fs.meta.defaultWindow && fs.meta.defaultWindow.ww > 0) return { ...fs.meta.defaultWindow };
+    try {
+      const f = await fs.getFrame(Math.floor(fs.frameCount / 2));
+      const d = f.data as ArrayLike<number>;
+      let min = Infinity, max = -Infinity;
+      for (let i = 0; i < d.length; i++) { const v = d[i]; if (v < min) min = v; if (v > max) max = v; }
+      if (!isFinite(min) || max <= min) return undefined;
+      return { wc: (min + max) / 2, ww: max - min };
+    } catch {
+      return undefined;
+    }
+  }
+
   // --- tool bindable ------------------------------------------------------
   function notifyTransform(): void {
     options.tools?._notifyTransform(id, { ...transform, pan: { ...transform.pan } });
@@ -138,6 +157,7 @@ export function createBiewerView(el: HTMLElement, options: BiewerViewOptions): B
         break;
       case 'reset':
         transform = defaultTransform();
+        if (autoWindow) transform.window = { ...autoWindow };
         break;
       case 'rotate':
         transform.rotation = (((transform.rotation + op.degrees) % 360) + 360) % 360 as 0 | 90 | 180 | 270;
@@ -161,8 +181,10 @@ export function createBiewerView(el: HTMLElement, options: BiewerViewOptions): B
         transform.pan = { x: transform.pan.x + g.dx, y: transform.pan.y + g.dy };
         break;
       case 'window-level': {
-        const w = transform.window ?? source?.meta.defaultWindow ?? { wc: 128, ww: 256 };
-        transform.window = { wc: w.wc + g.dx, ww: Math.max(1, w.ww + g.dy) };
+        const w = transform.window ?? autoWindow ?? source?.meta.defaultWindow ?? { wc: 128, ww: 256 };
+        // scale the drag to the data range so 16-bit CT and 8-bit US both feel right
+        const step = Math.max(1, (autoWindow?.ww ?? w.ww) / 256);
+        transform.window = { wc: w.wc + g.dx * step, ww: Math.max(1, w.ww + g.dy * step) };
         break;
       }
       default:
@@ -177,6 +199,7 @@ export function createBiewerView(el: HTMLElement, options: BiewerViewOptions): B
     applyGesture,
     reset() {
       transform = defaultTransform();
+      if (autoWindow) transform.window = { ...autoWindow };
       scheduleRender();
       notifyTransform();
     },
@@ -280,8 +303,16 @@ export function createBiewerView(el: HTMLElement, options: BiewerViewOptions): B
     source?.dispose();
     source = null;
     transform = defaultTransform();
+    autoWindow = undefined;
     showStatus('로딩 중…');
     try {
+      // video-by-URL: stream directly (no full download of large clips)
+      if (src.kind === 'url' && !Array.isArray(src.url) && (isVideoUrl(src.url) || src.format === 'mp4')) {
+        const fs = await videoUrlFrameSource(src.url);
+        if (disposed || token !== loadToken) { fs.dispose(); return; }
+        finishLoad(fs, token);
+        return;
+      }
       const { inputs, hint } = await acquire(src, { signal: abort.signal, onProgress: options.onProgress });
       if (disposed || token !== loadToken) return;
       if (inputs.length === 0) return fail('EMPTY_CONTAINER', '입력이 비어 있습니다');
@@ -300,27 +331,39 @@ export function createBiewerView(el: HTMLElement, options: BiewerViewOptions): B
         axis,
         extra: inputs.slice(1).map((i) => i.bytes),
       });
-      if (disposed || token !== loadToken) {
-        fs.dispose();
-        return;
-      }
-      source = fs;
-      currentFrame = Math.max(0, Math.min(fs.frameCount - 1, options.frame ?? options.defaultFrame ?? 0));
-      hideStatus();
-      options.onSourceReady?.({
-        frameCount: fs.frameCount,
-        frameSize: fs.frameSize,
-        pixelType: fs.pixelType,
-        format: fs.meta.format,
-        meta: fs.meta,
-      });
-      doResize();
-      // re-sync any bound playback (frameCount changed)
-      options.playback?.setFrame(currentFrame);
+      if (disposed || token !== loadToken) { fs.dispose(); return; }
+      await finishLoad(fs, token);
     } catch (cause) {
       if (disposed || token !== loadToken) return;
       const code: BiewerErrorCode = (cause as { code?: BiewerErrorCode })?.code ?? 'DECODE_FAILED';
       fail(code, (cause as Error)?.message ?? '로드 실패', cause);
+    }
+  }
+
+  /** Common post-decode wiring for both the streaming-video and byte-decode paths. */
+  async function finishLoad(fs: FrameSource, token: number): Promise<void> {
+    source = fs;
+    currentFrame = Math.max(0, Math.min(fs.frameCount - 1, options.frame ?? options.defaultFrame ?? 0));
+    // establish a default window/level for gray sources so contrast is right
+    // from the first paint (DICOM window from meta; NIfTI sampled from a slice)
+    autoWindow = await computeAutoWindow(fs);
+    transform.window = autoWindow ? { ...autoWindow } : undefined;
+    if (disposed || token !== loadToken) { fs.dispose(); return; }
+    hideStatus();
+    options.onSourceReady?.({
+      frameCount: fs.frameCount,
+      frameSize: fs.frameSize,
+      pixelType: fs.pixelType,
+      format: fs.meta.format,
+      meta: fs.meta,
+    });
+    doResize();
+    // Re-clamp the shared controller to the new frameCount WITHOUT resetting it
+    // to 0 — otherwise a host's "jump to middle slice" (fired via onSourceReady)
+    // would be undone here. A fresh single view keeps frame 0 (controller is 0).
+    if (options.playback) {
+      const cur = options.playback.getState().frame;
+      options.playback.setFrame(Math.min(cur, fs.frameCount - 1));
     }
   }
 

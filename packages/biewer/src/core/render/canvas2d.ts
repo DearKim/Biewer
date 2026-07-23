@@ -1,6 +1,6 @@
-// Canvas 2D renderer for the image/video path (rgba8 frames).
-// Handles fit + zoom/pan/rotate/flip/invert. Gray-volume window/level uses the
-// WebGL path (future); here gray frames are shown via a CPU LUT fallback.
+// Canvas 2D renderer. rgba8 frames (image/video) draw directly; gray frames
+// (gray8/gray16/float32 — NIfTI/DICOM) convert to RGBA through a CPU
+// window/level LUT. (A GPU/WebGL W/L path is a future perf optimization.)
 import type { FramePixels, ViewTransformState } from '../types';
 
 export interface Renderer {
@@ -56,14 +56,14 @@ export function createCanvas2DRenderer(canvas: HTMLCanvasElement): Renderer {
     ctx.scale(scale * (t.flipH ? -1 : 1), scale * (t.flipV ? -1 : 1));
     if (t.inverted) ctx.filter = 'invert(1)';
 
-    const source = toDrawable(frame);
+    const source = toDrawable(frame, t.window);
     ctx.imageSmoothingEnabled = t.zoom < 8; // crisp when heavily zoomed
     ctx.drawImage(source, -iw / 2, -ih / 2, iw, ih);
     ctx.restore();
     ctx.filter = 'none';
   }
 
-  function toDrawable(frame: FramePixels): CanvasImageSource {
+  function toDrawable(frame: FramePixels, window?: { wc: number; ww: number }): CanvasImageSource {
     if (frame.data instanceof ImageBitmap) return frame.data;
     // gray/rgba typed array → paint into scratch canvas
     if (!scratch) scratch = document.createElement('canvas');
@@ -71,7 +71,7 @@ export function createCanvas2DRenderer(canvas: HTMLCanvasElement): Renderer {
     scratch.height = frame.height;
     const sctx = scratch.getContext('2d')!;
     const img = sctx.createImageData(frame.width, frame.height);
-    fillRgba(img.data, frame);
+    fillRgba(img.data, frame, window);
     sctx.putImageData(img, 0, 0);
     return scratch;
   }
@@ -83,29 +83,38 @@ export function createCanvas2DRenderer(canvas: HTMLCanvasElement): Renderer {
   return { render, resize, clear, canvas, dispose };
 }
 
-/** Convert a frame's pixel data into RGBA bytes (no window/level yet for gray). */
-function fillRgba(out: Uint8ClampedArray, frame: FramePixels): void {
+/**
+ * Convert a frame's pixel data into RGBA bytes.
+ * - rgba8 typed array → copied straight through.
+ * - gray (8/16/float) → window/level mapping. With an explicit window {wc,ww}
+ *   the standard DICOM ramp is applied (out = (v - (wc-0.5))/(ww-1) + 0.5);
+ *   without one, per-frame min/max auto-contrast is used.
+ */
+function fillRgba(out: Uint8ClampedArray, frame: FramePixels, window?: { wc: number; ww: number }): void {
   const { data } = frame;
   if (data instanceof Uint8ClampedArray && data.length === out.length) {
     out.set(data);
     return;
   }
   const n = frame.width * frame.height;
-  if (data instanceof Uint8ClampedArray || data instanceof Uint8Array || data instanceof Uint16Array || data instanceof Int16Array || data instanceof Float32Array) {
-    // single-channel gray → simple normalize to 0..255 (placeholder LUT)
-    let min = Infinity;
-    let max = -Infinity;
-    for (let i = 0; i < n; i++) {
-      const v = data[i];
-      if (v < min) min = v;
-      if (v > max) max = v;
-    }
-    const range = max - min || 1;
-    for (let i = 0; i < n; i++) {
-      const g = ((data[i] - min) / range) * 255;
-      const o = i * 4;
-      out[o] = out[o + 1] = out[o + 2] = g;
-      out[o + 3] = 255;
-    }
+  if (!(data instanceof Uint8ClampedArray || data instanceof Uint8Array || data instanceof Uint16Array || data instanceof Int16Array || data instanceof Float32Array)) {
+    return;
+  }
+  let lo: number, span: number;
+  if (window && window.ww > 0) {
+    lo = window.wc - 0.5 - (window.ww - 1) / 2;
+    span = window.ww - 1 || 1;
+  } else {
+    // auto: per-frame min/max
+    let min = Infinity, max = -Infinity;
+    for (let i = 0; i < n; i++) { const v = data[i]; if (v < min) min = v; if (v > max) max = v; }
+    lo = min; span = (max - min) || 1;
+  }
+  for (let i = 0; i < n; i++) {
+    let g = ((data[i] - lo) / span) * 255;
+    g = g < 0 ? 0 : g > 255 ? 255 : g;
+    const o = i * 4;
+    out[o] = out[o + 1] = out[o + 2] = g;
+    out[o + 3] = 255;
   }
 }

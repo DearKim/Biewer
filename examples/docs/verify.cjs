@@ -115,6 +115,14 @@ const cellDivs = (page) => page.evaluate(() => document.querySelectorAll('.stage
   const afterStep = await firstCanvasStats(page);
   results.frameChanged = !!afterStep && !!painted && afterStep.sum !== painted.sum;
 
+  // window/level on a gray (DICOM) source: a big W/L change must repaint pixels
+  const beforeWL = await firstCanvasStats(page);
+  await page.evaluate(() => window.__biewer.tools.apply({ op: 'windowLevel', wc: 20, ww: 40 }));
+  await new Promise((r) => setTimeout(r, 400));
+  const afterWL = await firstCanvasStats(page);
+  results.windowLevel = !!afterWL && !!beforeWL && afterWL.sum !== beforeWL.sum;
+  await page.evaluate(() => window.__biewer.tools.apply({ op: 'reset' })); // restore auto W/L
+
   // Layout example: 2×2 grid actually mounts 4 viewports (DOM canvas count)
   await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('Grid layout')); it && it.click(); });
   await page.waitForFunction(() => document.querySelectorAll('.stage biewer-view canvas').length >= 4, { timeout: 20000 });
@@ -175,7 +183,7 @@ const cellDivs = (page) => page.evaluate(() => document.querySelectorAll('.stage
     results.gridControls.presetOptions >= 6 && results.gridControls.hasIcon && results.gridControls.popoverHiddenInitially &&
     results.presetApply === 8 && results.picker.opened && results.picker.grewPast4 && results.picker.cells === 30 &&
     results.realMouse.grid === '3x3' && results.realMouse.cells === 9 &&
-    results.painted && results.frameChanged && results.cells >= 4 && results.duplicate &&
+    results.painted && results.frameChanged && results.windowLevel && results.cells >= 4 && results.duplicate &&
     results.incremental.kept0 && results.incremental.kept1 && results.incremental.kept3 && results.incremental.cell2Replaced &&
     results.howto.mode === 'howto' && results.howto.mentionsHttp && errors.length === 0;
   console.log(JSON.stringify({ ok, results }, null, 2));
