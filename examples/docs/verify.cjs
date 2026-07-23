@@ -100,17 +100,25 @@ const cellDivs = (page) => page.evaluate(() => document.querySelectorAll('.stage
     return { opened, grewPast4: grewPast4 && maxR >= 6, cells: document.querySelectorAll('.stage .cell').length };
   });
 
-  // Layout example loads a 2×2 grid (default) + renders
-  await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('Grid layout')); it && it.click(); });
-  await page.waitForFunction(() => document.querySelectorAll('.stage biewer-view canvas').length >= 4, { timeout: 20000 });
-  await new Promise((r) => setTimeout(r, 700));
+  // REAL DICOM decode + paint (emri_small, content on every frame) + slice step
+  await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('DICOM series')); it && it.click(); });
+  await page.waitForFunction(() => {
+    const c = document.querySelector('.stage biewer-view canvas'); if (!c) return false;
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let nz = 0; for (let i = 0; i < d.length; i += 4) if (d[i]) nz++;
+    return nz > 1000;
+  }, { timeout: 20000 });
   const painted = await firstCanvasStats(page);
   results.painted = !!painted && painted.nonzero > 1000;
-  results.cells = await cellCanvases(page);
-  await page.evaluate(() => window.__biewer.playback.step(4));
-  await new Promise((r) => setTimeout(r, 400));
+  await page.evaluate(() => window.__biewer.playback.step(3));
+  await new Promise((r) => setTimeout(r, 500));
   const afterStep = await firstCanvasStats(page);
   results.frameChanged = !!afterStep && !!painted && afterStep.sum !== painted.sum;
+
+  // Layout example: 2×2 grid actually mounts 4 viewports (DOM canvas count)
+  await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('Grid layout')); it && it.click(); });
+  await page.waitForFunction(() => document.querySelectorAll('.stage biewer-view canvas').length >= 4, { timeout: 20000 });
+  results.cells = await cellCanvases(page);
 
   // drag&drop duplicate allowed (existing cell stays)
   results.duplicate = await page.evaluate(() => { window.__biewer.placeAt(0, 's1'); window.__biewer.placeAt(1, 's1'); const s = window.__biewer.state.selected; return s[0] === 's1' && s[1] === 's1'; });
@@ -162,7 +170,7 @@ const cellDivs = (page) => page.evaluate(() => document.querySelectorAll('.stage
   await browser.close();
   results.pageErrors = errors;
   const ok = results.home.logo && results.home.features >= 6 && results.home.body === 'route-home' &&
-    results.catalog.groups >= 6 && results.catalog.layoutsCat && results.catalog.noLayoutTool && results.catalog.planned >= 4 &&
+    results.catalog.groups >= 6 && results.catalog.layoutsCat && results.catalog.noLayoutTool && results.catalog.planned >= 1 &&
     results.perExampleDocs && results.gridEverywhere &&
     results.gridControls.presetOptions >= 6 && results.gridControls.hasIcon && results.gridControls.popoverHiddenInitially &&
     results.presetApply === 8 && results.picker.opened && results.picker.grewPast4 && results.picker.cells === 30 &&

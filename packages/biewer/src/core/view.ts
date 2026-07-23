@@ -297,6 +297,7 @@ export function createBiewerView(el: HTMLElement, options: BiewerViewOptions): B
         filename: head.filename,
         signal: abort.signal,
         onProgress: options.onProgress,
+        axis,
         extra: inputs.slice(1).map((i) => i.bytes),
       });
       if (disposed || token !== loadToken) {

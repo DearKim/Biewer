@@ -105,6 +105,8 @@ export interface DecodeContext {
   filename?: string;
   signal?: AbortSignal;
   onProgress?: (p: BiewerProgress) => void;
+  /** volume slice axis (nii/dcm) */
+  axis?: VolumeAxis;
   /** decode additional inputs of a multi-file source (stack/series) */
   extra?: Uint8Array[];
 }

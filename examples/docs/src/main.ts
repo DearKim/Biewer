@@ -22,6 +22,7 @@ const state = {
   lang: 'core' as 'core' | 'react' | 'wc',
 };
 const cellCount = () => state.grid.rows * state.grid.cols;
+let nudgedMiddle = false; // whether we've jumped a freshly-loaded volume to its middle slice
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 function el(tag: string, cls?: string, html?: string): HTMLElement {
@@ -192,6 +193,7 @@ function renderLeft(): void {
 function applyExample(ex: Example): void {
   state.activeExample = ex.id;
   state.commentsMode = 'example';
+  nudgedMiddle = false;
   state.grid = { rows: ex.rows, cols: ex.cols };
   state.selected = Array.from({ length: ex.rows * ex.cols }, (_, i) => ex.series[i] ?? null);
   if (ex.tool !== undefined) tools.setActiveTool(ex.tool);
@@ -211,7 +213,7 @@ function serieButton(s: Series): HTMLButtonElement {
   b.draggable = true;
   b.dataset.seriesId = s.id;
   b.innerHTML =
-    `<span class="thumb-wrap"><img class="thumb" ${s.thumb ? `src="${s.thumb}"` : ''} alt="" /><span class="dur">${s.frames}f</span></span>` +
+    `<span class="thumb-wrap"><img class="thumb" ${s.thumb ? `src="${s.thumb}"` : ''} alt="" /><span class="dur">${s.fmt}</span></span>` +
     `<span class="info"><span class="t">${s.title}</span><span class="m">${s.modality} · ${s.date}</span></span>` +
     (posLabel ? `<span class="pos" title="in viewport ${cells.join(', ')}">${posLabel}</span>` : '');
   b.addEventListener('dragstart', (e) => { e.dataTransfer!.setData('text/biewer-series', s.id); e.dataTransfer!.effectAllowed = 'copy'; b.classList.add('dragging'); });
@@ -233,6 +235,7 @@ function renderRight(): void {
 function placeAt(cell: number, id: string): void {
   fitSelection(cellCount());
   state.selected[cell] = id;
+  nudgedMiddle = false; // a freshly dropped volume should also start mid-slice
   afterPlacement();
 }
 function clearCell(cell: number): void {
@@ -451,6 +454,16 @@ function renderCell(cell: HTMLElement, i: number): void {
   const view = document.createElement('biewer-view') as BiewerViewElement;
   view.tools = tools;
   view.playback = playback;
+  // volumes: start on the MIDDLE slice (frame 0 is often an empty edge slice) —
+  // one nudge per example/placement so the first paint shows real anatomy.
+  view.addEventListener('bw-source-ready', (e) => {
+    const info = (e as CustomEvent).detail as { frameCount: number };
+    if (!nudgedMiddle && info.frameCount > 2 && playback.getState().frame === 0) {
+      nudgedMiddle = true;
+      playback.setFrame(Math.floor(info.frameCount / 2));
+    }
+    updatePlayback(playback.getState());
+  });
   cell.appendChild(view);
   void realizeSeries(s).then((rs) => {
     if (cell.dataset.seriesId !== id) return; // cell changed again before decode finished

@@ -1,80 +1,71 @@
 import type { BiewerSource } from '@deepnoid/biewer';
 
-// ---- synthetic series (no external data) ----------------------------------
+// ---- real, fetchable sample datasets (all CORS-enabled) --------------------
+// NIfTI  : NiiVue demo images (github.io, CORS *)
+// DICOM  : pydicom / pydicom-data test files (raw.githubusercontent, CORS *)
+// mp4    : MDN CC0 sample video (CORS *)
+// images : same-origin public assets served by this docs site
 export type StudyKind = 'current' | 'prior';
+export type FmtLabel = 'NIfTI' | 'DICOM' | 'MP4' | 'PNG' | 'ZIP';
+
+const NIIVUE = 'https://niivue.github.io/niivue-demo-images';
+const PYDICOM = 'https://raw.githubusercontent.com/pydicom/pydicom/main/src/pydicom/data/test_files';
+const PYDATA = 'https://raw.githubusercontent.com/pydicom/pydicom-data/master/data_store/data';
+const MDN = 'https://interactive-examples.mdn.mozilla.net/media/cc0-videos';
+const IMG_STACK = ['/samples/img1.png', '/samples/img2.png', '/samples/img3.png'];
 
 export interface Series {
   id: string;
   title: string;
   modality: string;
-  frames: number;
-  hueBase: number;
+  fmt: FmtLabel;
+  hueBase: number;            // thumbnail tint
   study: StudyKind;
   date: string;
-  source?: BiewerSource;
+  rail: boolean;              // shown in the right "series" rail
+  source: BiewerSource;       // real, fetchable
   thumb?: string;
 }
 
 export const SERIES: Series[] = [
-  { id: 's1', title: 'Brain MR — Axial', modality: 'MR · T1', frames: 24, hueBase: 190, study: 'current', date: '2026-07-21' },
-  { id: 's2', title: 'Chest CT — Axial', modality: 'CT', frames: 40, hueBase: 30, study: 'current', date: '2026-07-21' },
-  { id: 's3', title: 'Cardiac Cine', modality: 'US · cine', frames: 30, hueBase: 320, study: 'current', date: '2026-07-21' },
-  { id: 's4', title: 'Abdomen MR', modality: 'MR · T2', frames: 18, hueBase: 100, study: 'current', date: '2026-07-21' },
-  { id: 'p1', title: 'Brain MR — Axial', modality: 'MR · T1', frames: 24, hueBase: 205, study: 'prior', date: '2026-01-12' },
-  { id: 'p2', title: 'Chest CT — Axial', modality: 'CT', frames: 40, hueBase: 45, study: 'prior', date: '2026-01-12' },
+  // current study (rail)
+  { id: 's1', title: 'Brain MR (MNI152)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 190, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${NIIVUE}/mni152.nii.gz` } },
+  { id: 's2', title: 'MR — multiframe', modality: 'MR · DICOM', fmt: 'DICOM', hueBase: 30, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${PYDATA}/emri_small.dcm` } },
+  { id: 's3', title: 'Flower (cine)', modality: 'Video · mp4', fmt: 'MP4', hueBase: 320, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${MDN}/flower.mp4` } },
+  { id: 's4', title: 'Perfusion (pCASL)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 100, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${NIIVUE}/pcasl.nii.gz` } },
+  // prior study (rail, follow-up)
+  { id: 'p1', title: 'Brain MR (T1)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 205, study: 'prior', date: '2026-01-12', rail: true, source: { kind: 'url', url: `${NIIVUE}/chris_t1.nii.gz` } },
+  { id: 'p2', title: 'CT (small)', modality: 'CT · DICOM', fmt: 'DICOM', hueBase: 45, study: 'prior', date: '2026-01-12', rail: true, source: { kind: 'url', url: `${PYDICOM}/CT_small.dcm` } },
+  // format-demo sources (not in the rail)
+  { id: 'img', title: 'Image stack', modality: 'PNG', fmt: 'PNG', hueBase: 260, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: IMG_STACK } },
+  { id: 'zip', title: 'Image archive', modality: 'ZIP', fmt: 'ZIP', hueBase: 280, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: '/samples/stack.zip' } },
 ];
 
-export const CURRENT_SERIES = SERIES.filter((s) => s.study === 'current');
-export const PRIOR_SERIES = SERIES.filter((s) => s.study === 'prior');
+export const CURRENT_SERIES = SERIES.filter((s) => s.study === 'current' && s.rail);
+export const PRIOR_SERIES = SERIES.filter((s) => s.study === 'prior' && s.rail);
 
-function drawFrame(ctx: CanvasRenderingContext2D, w: number, h: number, s: Series, i: number): void {
-  const hue = (s.hueBase + (i / s.frames) * 40) % 360;
-  ctx.fillStyle = `hsl(${hue} 42% 10%)`;
-  ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = 'rgba(78,197,220,0.08)';
-  ctx.lineWidth = 1;
-  for (let x = 0; x <= w; x += Math.max(24, w / 16)) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-  }
-  ctx.strokeStyle = `hsl(${hue} 80% 62%)`;
-  ctx.lineWidth = Math.max(3, w / 90);
-  ctx.beginPath();
-  ctx.arc(w / 2, h / 2, w * (0.12 + (i / s.frames) * 0.28), 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.92)';
-  ctx.font = `bold ${Math.round(w / 12)}px system-ui`;
-  ctx.textAlign = 'center';
-  ctx.fillText(`${i + 1} / ${s.frames}`, w / 2, h / 2 + w / 36);
-  ctx.font = `${Math.round(w / 26)}px system-ui`;
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.fillText(s.modality, w / 2, h - w / 24);
-}
-
-async function toBuffer(c: HTMLCanvasElement): Promise<ArrayBuffer> {
-  const blob: Blob = await new Promise((r) => c.toBlob((b) => r(b!), 'image/png'));
-  return blob.arrayBuffer();
-}
-
-export async function makeThumb(s: Series, size = 240): Promise<void> {
-  if (s.thumb) return;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  drawFrame(c.getContext('2d')!, size, size, s, 0);
-  s.thumb = c.toDataURL('image/png');
-}
-
-export async function realizeSeries(s: Series, size = 480): Promise<Series> {
-  if (s.source) return s;
-  const data: ArrayBuffer[] = [];
+/** Cheap tinted placeholder thumbnail (no network/decoding for the rail). */
+export async function makeThumb(s: Series, size = 200): Promise<void> {
+  if (s.thumb || typeof document === 'undefined') return;
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const ctx = c.getContext('2d')!;
-  for (let i = 0; i < s.frames; i++) {
-    drawFrame(ctx, size, size, s, i);
-    data.push(await toBuffer(c));
-    if (i === 0) s.thumb = c.toDataURL('image/png');
-  }
-  s.source = { kind: 'buffer', data, name: `${s.id}.png` };
+  const g = ctx.createLinearGradient(0, 0, size, size);
+  g.addColorStop(0, `hsl(${s.hueBase} 45% 16%)`);
+  g.addColorStop(1, `hsl(${s.hueBase} 40% 8%)`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = `hsl(${s.hueBase} 80% 62%)`;
+  ctx.lineWidth = size / 40;
+  ctx.beginPath(); ctx.arc(size / 2, size / 2, size * 0.28, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.font = `bold ${Math.round(size / 8)}px system-ui`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(s.fmt, size / 2, size / 2);
+  s.thumb = c.toDataURL('image/png');
+}
+
+/** Sources are already real URLs — nothing to build, just hand them back. */
+export async function realizeSeries(s: Series): Promise<Series> {
   return s;
 }
 
@@ -120,19 +111,19 @@ export const EXAMPLES: Example[] = [
   // --- Layout (viewport freedom) — one example driven by the Grid control ---
   { id: 'layout', category: 'Layouts', title: 'Grid layout', desc: 'Arrange viewports in any grid — pick a preset (1×1 … 4×2) from the Grid dropdown, or draw a custom R×C grid with the picker. The plugin never sees a "layout"; you size the CSS grid and it renders one view per cell.', kind: 'layout', rows: 2, cols: 2, custom: true, series: ['s1', 's2', 's3', 's4'] },
 
-  // --- Basics (format) ---
-  { id: 'basic-stack', category: 'Basics', title: 'Basic image stack', desc: 'A stack of images (PNG/JPEG/WebP) as scrollable frames.', kind: 'format', rows: 1, cols: 1, series: ['s1'], format: 'png' },
-  { id: 'web-images', category: 'Basics', title: 'Web images (PNG/JPG)', desc: 'Ordinary web images via the browser-native decode path.', kind: 'format', rows: 1, cols: 1, series: ['s3'], format: 'jpg' },
-  { id: 'nifti', category: 'Basics', title: 'NIfTI volume', desc: 'Scroll a NIfTI volume along the selected axis.', kind: 'format', rows: 1, cols: 1, series: ['s1'], format: 'nii.gz', planned: true },
-  { id: 'dicom', category: 'Basics', title: 'DICOM series', desc: 'A DICOM series (multi-frame or per-instance) as one FrameSource.', kind: 'format', rows: 1, cols: 1, series: ['s2'], format: 'dcm', planned: true },
-  { id: 'jpeg-ls', category: 'Basics', title: 'JPEG-LS decode', desc: 'JPEG-LS pixels via a WASM codec worker.', kind: 'format', rows: 1, cols: 1, series: ['s2'], format: 'jls', planned: true },
-  { id: 'archive', category: 'Basics', title: 'Archive (zip / gz)', desc: 'Unwrap a zip/gz archive and re-detect the inner format.', kind: 'format', rows: 1, cols: 1, series: ['s4'], format: 'zip', planned: true },
+  // --- Basics (format) — real fetchable data ---
+  { id: 'basic-stack', category: 'Basics', title: 'Basic image stack', desc: 'A stack of PNG images decoded to scrollable frames (browser-native).', kind: 'format', rows: 1, cols: 1, series: ['img'], format: 'png' },
+  { id: 'web-images', category: 'Basics', title: 'Web images (PNG/JPG)', desc: 'Ordinary web images via the browser-native decode path.', kind: 'format', rows: 1, cols: 1, series: ['img'], format: 'png' },
+  { id: 'nifti', category: 'Basics', title: 'NIfTI volume', desc: 'A real .nii.gz volume (NiiVue MNI152) — gunzipped and sliced along the chosen axis.', kind: 'format', rows: 1, cols: 1, series: ['s1'], format: 'nii.gz' },
+  { id: 'dicom', category: 'Basics', title: 'DICOM series', desc: 'A real uncompressed multiframe DICOM (pydicom emri_small) as one FrameSource.', kind: 'format', rows: 1, cols: 1, series: ['s2'], format: 'dcm' },
+  { id: 'archive', category: 'Basics', title: 'Archive (zip / gz)', desc: 'Unwrap a .zip of images (or .gz, as used by .nii.gz) and re-detect the inner format.', kind: 'format', rows: 1, cols: 1, series: ['zip'], format: 'zip' },
+  { id: 'jpeg-ls', category: 'Basics', title: 'JPEG-LS (compressed DICOM)', desc: 'JPEG-LS is a compressed DICOM transfer syntax; decoding compressed pixels needs a WASM codec (later milestone). Uncompressed DICOM works today.', kind: 'format', rows: 1, cols: 1, series: ['s2'], format: 'jls', planned: true },
 
   // --- Output modes ---
-  { id: 'slice', category: 'Output modes', title: 'Slice scroll', desc: 'Manual frame navigation (wheel / scrollbar / keyboard), rAF-coalesced.', kind: 'output', rows: 1, cols: 1, series: ['s2'], mode: 'slice' },
-  { id: 'cine', category: 'Output modes', title: 'Cine (auto play)', desc: 'Auto-advance frames — play / pause / stop and speed.', kind: 'output', rows: 1, cols: 1, series: ['s3'], mode: 'auto' },
-  { id: 'video', category: 'Output modes', title: 'Video (mp4)', desc: 'Seek an mp4 by a time step, or play as cine.', kind: 'output', rows: 1, cols: 1, series: ['s3'], mode: 'auto', format: 'mp4', planned: true },
-  { id: 'sync-frames', category: 'Output modes', title: 'Frame-synced views', desc: 'One PlaybackController bound to many views keeps frames in sync.', kind: 'output', rows: 1, cols: 2, series: ['s1', 's2'], mode: 'slice' },
+  { id: 'slice', category: 'Output modes', title: 'Slice scroll', desc: 'Manual frame navigation (wheel / scrollbar / keyboard), rAF-coalesced.', kind: 'output', rows: 1, cols: 1, series: ['s1'], mode: 'slice' },
+  { id: 'cine', category: 'Output modes', title: 'Cine (auto play)', desc: 'Auto-advance frames — play / pause / stop and speed. Works on volumes and video.', kind: 'output', rows: 1, cols: 1, series: ['s2'], mode: 'auto' },
+  { id: 'video', category: 'Output modes', title: 'Video (mp4)', desc: 'A real mp4 (MDN CC0) sampled to frames; scroll to seek or play as cine.', kind: 'output', rows: 1, cols: 1, series: ['s3'], mode: 'auto', format: 'mp4' },
+  { id: 'sync-frames', category: 'Output modes', title: 'Frame-synced views', desc: 'One PlaybackController bound to many views keeps frames in sync.', kind: 'output', rows: 1, cols: 2, series: ['s1', 'p1'], mode: 'slice' },
 
   // --- Compare ---
   { id: 'side-by-side', category: 'Compare', title: 'Side-by-side', desc: 'Two series next to each other.', kind: 'compare', rows: 1, cols: 2, series: ['s1', 's2'] },
@@ -143,7 +134,7 @@ export const EXAMPLES: Example[] = [
   // --- Tools ---
   { id: 'zoom-pan', category: 'Tools', title: 'Zoom & pan', desc: 'Drag to zoom/pan. Headless — the host renders the toolbar.', kind: 'tool', rows: 1, cols: 1, series: ['s1'], tool: 'zoom' },
   { id: 'window-level', category: 'Tools', title: 'Window / Level', desc: 'Drag to adjust window center/width on gray sources.', kind: 'tool', rows: 1, cols: 1, series: ['s2'], tool: 'window-level' },
-  { id: 'shared-tools', category: 'Tools', title: 'Shared tools (scope: all)', desc: 'One ToolController broadcasts a single action to every bound view.', kind: 'tool', rows: 2, cols: 2, series: ['s1', 's2', 's3', 's4'], tool: 'zoom' },
+  { id: 'shared-tools', category: 'Tools', title: 'Shared tools (scope: all)', desc: 'One ToolController broadcasts a single action to every bound view.', kind: 'tool', rows: 2, cols: 2, series: ['s1', 's2', 's4', 'p1'], tool: 'zoom' },
   { id: 'measurement', category: 'Tools', title: 'Measurement (ruler/circle/polygon)', desc: 'Draw measurements with undo/redo; host owns save/load.', kind: 'tool', rows: 1, cols: 1, series: ['s1'], tool: null, planned: true },
 ];
 
