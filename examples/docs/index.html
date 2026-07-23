@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/biewer-favicon.svg" />
+    <link rel="alternate icon" href="/biewer-favicon-32.png" />
+    <title>Biewer — universal image viewer</title>
+  </head>
+  <body>
+    <header class="yt-header">
+      <a class="brand" href="#/"><img src="/biewer-horizontal.svg" alt="Biewer" /></a>
+      <nav>
+        <a href="#/" data-route="home">Home</a>
+        <a href="#/studio" data-route="studio">Studio</a>
+        <a href="#/studio" data-route="docs" data-tab="languages">Docs</a>
+      </nav>
+      <div class="spacer"></div>
+      <div class="search"><input placeholder="Search…" /></div>
+      <a class="icon-btn" title="Registry" href="#/">◈</a>
+    </header>
+
+    <div id="app"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

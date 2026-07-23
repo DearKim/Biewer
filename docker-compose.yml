@@ -1,0 +1,26 @@
+# Local test: serve the built examples as static nginx sites.
+# `./dev.ps1 -Docker` brings these up detached; `./dev.ps1 -Down` stops them.
+name: biewer
+
+services:
+  example-docs:
+    image: biewer/example-docs:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        EXAMPLE: docs
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  example-react:
+    image: biewer/example-react:local
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        EXAMPLE: react
+    ports:
+      - "8081:80"
+    restart: unless-stopped

@@ -1,0 +1,14 @@
+# 모든 텍스트는 LF (CLAUDE.md docs 규칙 — CRLF 유입 금지)
+* text=auto eol=lf
+
+# 바이너리
+*.png binary
+*.gif binary
+*.jpg binary
+*.webp binary
+*.mp4 binary
+*.zip binary
+*.gz binary
+*.nii binary
+*.dcm binary
+*.woff2 binary

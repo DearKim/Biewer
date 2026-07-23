@@ -1,0 +1,23 @@
+{
+  "name": "@deepnoid/biewer-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Biewer monorepo — @deepnoid/biewer package + framework examples",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm --filter @deepnoid/biewer build",
+    "build:watch": "pnpm --filter @deepnoid/biewer build --watch",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "dev": "pnpm --filter @biewer/example-docs dev",
+    "dev:react": "pnpm --filter @biewer/example-react dev",
+    "example:build": "pnpm -r --filter './examples/*' build"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  },
+  "packageManager": "pnpm@11.0.9",
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  }
+}

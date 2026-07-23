@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Biewer — Medical imaging viewer, by BLAH</title>
+<link rel="icon" type="image/svg+xml" href="./icons/biewer-favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --scanner-black: #04342C;
+    --deep-teal:     #0F6E56;
+    --scan-cyan:     #4EC5DC;
+    --mist:          #E1F5EE;
+    --white:         #FFFFFF;
+    --charcoal-800:  #072a24;
+    --charcoal-700:  #0a382f;
+    --text-dim:      rgba(255, 255, 255, 0.62);
+    --text-mute:     rgba(255, 255, 255, 0.38);
+    --hairline:      rgba(78, 197, 220, 0.18);
+    --hairline-soft: rgba(255, 255, 255, 0.08);
+
+    --font-display: 'Inter', system-ui, -apple-system, sans-serif;
+    --font-mono:    'JetBrains Mono', 'SF Mono', Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--font-display);
+    background: var(--scanner-black);
+    color: var(--white);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+    font-feature-settings: "ss01", "cv02";
+    letter-spacing: 0.04em;
+  }
+
+  /* ─── HERO ─── */
+
+  .hero {
+    position: relative;
+    min-height: 100vh;
+    padding: 32px 48px 80px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background:
+      radial-gradient(ellipse 80% 60% at 30% 40%, rgba(15, 110, 86, 0.35) 0%, transparent 60%),
+      var(--scanner-black);
+  }
+
+  /* Ambient coordinate grid */
+  .grid-bg {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image:
+      linear-gradient(to right, var(--hairline) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--hairline) 1px, transparent 1px);
+    background-size: 80px 80px;
+    mask-image: radial-gradient(ellipse 70% 90% at 50% 50%, black 30%, transparent 90%);
+  }
+
+  /* Orientation labels — the medical DICOM tell */
+  .orient {
+    position: absolute;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    color: var(--scan-cyan);
+    opacity: 0.55;
+    z-index: 2;
+  }
+  .orient.tl { top: 32px; left: 48px; }
+  .orient.tr { top: 32px; right: 48px; }
+  .orient.bl { bottom: 32px; left: 48px; }
+  .orient.br { bottom: 32px; right: 48px; }
+  .orient::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border: 1px solid var(--scan-cyan);
+    margin-right: 8px;
+    vertical-align: middle;
+    opacity: 0.7;
+  }
+
+  /* Top bar */
+  .topbar {
+    position: relative;
+    z-index: 3;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: var(--text-mute);
+    text-transform: uppercase;
+  }
+  .topbar-left { display: flex; gap: 24px; align-items: center; }
+  .topbar-right { display: flex; gap: 16px; align-items: center; }
+  .status-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--scan-cyan);
+    margin-right: 6px;
+    animation: dotPulse 2.2s ease-in-out infinite;
+  }
+  @keyframes dotPulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.85); }
+    50%      { opacity: 1;    transform: scale(1); }
+  }
+
+  /* Hero content */
+  .hero-body {
+    position: relative;
+    z-index: 2;
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    gap: 80px;
+    max-width: 1280px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 40px 0;
+  }
+
+  .hero-icon {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+  }
+  .hero-icon svg {
+    width: min(440px, 100%);
+    height: auto;
+    filter: drop-shadow(0 20px 60px rgba(78, 197, 220, 0.12));
+  }
+
+  /* Icon animation targets */
+  #bar-0, #bar-1, #bar-2, #bar-3, #bar-4 {
+    opacity: 0;
+    transform-origin: center;
+    transform-box: fill-box;
+    animation: barEnter 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards,
+               barBreath 4s ease-in-out infinite;
+  }
+  #bar-0 { animation-delay: 0.10s, 1.5s; }
+  #bar-1 { animation-delay: 0.20s, 1.5s; }
+  #bar-2 { animation-delay: 0.30s, 1.5s; }
+  #bar-3 { animation-delay: 0.20s, 1.5s; }
+  #bar-4 { animation-delay: 0.10s, 1.5s; }
+
+  @keyframes barEnter {
+    0%   { opacity: 0; transform: scaleY(0.3); }
+    100% { opacity: 1; transform: scaleY(1); }
+  }
+  @keyframes barBreath {
+    0%, 100% { transform: scaleY(1); }
+    50%      { transform: scaleY(1.05); }
+  }
+
+  #reticle-ring {
+    stroke-dasharray: 2400;
+    stroke-dashoffset: 2400;
+    animation: draw 1.2s cubic-bezier(0.22, 1, 0.36, 1) 0.6s forwards;
+  }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  .cardinal {
+    opacity: 0;
+    animation: fadeIn 0.4s ease-out 1.2s forwards;
+  }
+  @keyframes fadeIn { to { opacity: 1; } }
+
+  #focal-ring, #focal-dot {
+    opacity: 0;
+    transform-origin: 512px 512px;
+    animation: focalIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 1.4s forwards;
+  }
+  @keyframes focalIn {
+    0%   { opacity: 0; transform: scale(0); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+
+  #pulse-ring {
+    transform-origin: 512px 512px;
+    animation: pulse 3.2s ease-out 2s infinite;
+    opacity: 0;
+  }
+  @keyframes pulse {
+    0%   { transform: scale(0.2); opacity: 0.9; }
+    100% { transform: scale(1.6); opacity: 0; }
+  }
+
+  /* Scan line sweeping */
+  #scan-line {
+    animation: scan 4s ease-in-out 1.8s infinite;
+  }
+  @keyframes scan {
+    0%       { transform: translateY(-320px); opacity: 0; }
+    15%, 85% { opacity: 0.6; }
+    50%      { transform: translateY(320px); }
+    100%     { transform: translateY(-320px); opacity: 0; }
+  }
+
+  /* Hero copy */
+  .hero-copy { opacity: 0; animation: fadeUp 0.8s cubic-bezier(0.22, 1, 0.36, 1) 0.4s forwards; }
+  @keyframes fadeUp {
+    0%   { opacity: 0; transform: translateY(20px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.28em;
+    color: var(--scan-cyan);
+    text-transform: uppercase;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .eyebrow::before {
+    content: '';
+    display: block;
+    width: 32px;
+    height: 1px;
+    background: var(--scan-cyan);
+  }
+
+  h1.wordmark {
+    font-size: clamp(72px, 10vw, 128px);
+    font-weight: 500;
+    line-height: 0.95;
+    letter-spacing: -0.04em;
+    margin-bottom: 24px;
+    color: var(--white);
+  }
+  h1.wordmark .i-dot {
+    display: inline-block;
+    position: relative;
+  }
+  h1.wordmark .i-dot::after {
+    content: '';
+    position: absolute;
+    top: 0.24em;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0.14em;
+    height: 0.14em;
+    background: var(--scan-cyan);
+    border-radius: 50%;
+    box-shadow: 0 0 0 0.04em var(--white);
+  }
+
+  .tagline {
+    font-size: 22px;
+    font-weight: 400;
+    line-height: 1.4;
+    color: var(--white);
+    margin-bottom: 16px;
+    max-width: 460px;
+  }
+  .subtitle {
+    font-size: 15px;
+    color: var(--text-dim);
+    max-width: 460px;
+    margin-bottom: 40px;
+  }
+
+  .version-row {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    padding-top: 24px;
+    border-top: 1px solid var(--hairline-soft);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-mute);
+  }
+  .version-row strong {
+    color: var(--scan-cyan);
+    font-weight: 600;
+  }
+
+  /* ─── STORY SECTION (light) ─── */
+
+  .story {
+    background: var(--mist);
+    color: var(--scanner-black);
+    padding: 120px 48px;
+    position: relative;
+  }
+  .story-inner {
+    max-width: 1120px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 5fr 4fr;
+    gap: 80px;
+    align-items: start;
+  }
+  .story-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.28em;
+    color: var(--deep-teal);
+    text-transform: uppercase;
+    margin-bottom: 24px;
+  }
+  .story h2 {
+    font-size: clamp(36px, 4vw, 52px);
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    color: var(--scanner-black);
+    margin-bottom: 32px;
+  }
+  .story h2 em {
+    font-style: normal;
+    color: var(--deep-teal);
+  }
+  .story p {
+    font-size: 17px;
+    line-height: 1.65;
+    color: #2a3f39;
+    margin-bottom: 20px;
+    max-width: 56ch;
+  }
+
+  .palette {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .palette-row {
+    display: grid;
+    grid-template-columns: 56px 1fr auto;
+    align-items: center;
+    gap: 20px;
+    padding: 16px 20px;
+    background: var(--white);
+    border: 1px solid rgba(15, 110, 86, 0.08);
+    border-radius: 8px;
+  }
+  .swatch {
+    width: 56px;
+    height: 40px;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 0, 0, 0.06);
+  }
+  .swatch-info { display: flex; flex-direction: column; gap: 2px; }
+  .swatch-name { font-size: 14px; font-weight: 600; color: var(--scanner-black); }
+  .swatch-role { font-size: 12px; color: #64756f; }
+  .swatch-hex {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--deep-teal);
+    letter-spacing: 0.03em;
+  }
+
+  /* ─── FEATURES SECTION ─── */
+
+  .features {
+    background: var(--scanner-black);
+    padding: 120px 48px;
+    position: relative;
+  }
+  .features::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(to right, var(--hairline) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--hairline) 1px, transparent 1px);
+    background-size: 80px 80px;
+    mask-image: radial-gradient(ellipse 60% 80% at 50% 50%, black 20%, transparent 80%);
+    pointer-events: none;
+  }
+  .features-inner {
+    max-width: 1120px;
+    margin: 0 auto;
+    position: relative;
+  }
+  .features h2 {
+    font-size: clamp(36px, 4vw, 52px);
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin-bottom: 80px;
+    max-width: 20ch;
+  }
+
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  .feature {
+    padding: 32px;
+    background: var(--charcoal-800);
+    border: 1px solid var(--hairline-soft);
+    border-radius: 12px;
+    position: relative;
+    transition: border-color 0.3s ease;
+  }
+  .feature:hover { border-color: rgba(78, 197, 220, 0.4); }
+  .feature-num {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    color: var(--scan-cyan);
+    margin-bottom: 24px;
+  }
+  .feature-icon {
+    width: 40px;
+    height: 40px;
+    margin-bottom: 20px;
+    color: var(--scan-cyan);
+  }
+  .feature h3 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--white);
+    margin-bottom: 10px;
+    letter-spacing: -0.01em;
+  }
+  .feature p {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-dim);
+  }
+
+  /* ─── FOOTER ─── */
+
+  footer {
+    padding: 48px;
+    background: var(--charcoal-700);
+    border-top: 1px solid var(--hairline-soft);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-mute);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  footer .parent {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  footer .parent-mark {
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+  }
+  footer .parent-mark span {
+    display: block;
+    width: 3px;
+    background: var(--deep-teal);
+    border-radius: 1px;
+  }
+
+  /* ─── RESPONSIVE ─── */
+
+  @media (max-width: 900px) {
+    .hero { padding: 24px 24px 60px; }
+    .hero-body {
+      grid-template-columns: 1fr;
+      gap: 48px;
+      padding: 24px 0;
+    }
+    .hero-icon svg { width: 260px; }
+    h1.wordmark { font-size: 72px; }
+    .tagline { font-size: 18px; }
+    .orient { font-size: 10px; }
+    .orient.tl, .orient.bl { left: 24px; }
+    .orient.tr, .orient.br { right: 24px; }
+    .story, .features { padding: 80px 24px; }
+    .story-inner { grid-template-columns: 1fr; gap: 48px; }
+    .feature-grid { grid-template-columns: 1fr; }
+    footer { flex-direction: column; gap: 16px; padding: 32px 24px; text-align: center; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+    #bar-0, #bar-1, #bar-2, #bar-3, #bar-4,
+    .hero-copy, #reticle-ring, .cardinal,
+    #focal-ring, #focal-dot { opacity: 1; }
+    #reticle-ring { stroke-dashoffset: 0; }
+    #pulse-ring, #scan-line { display: none; }
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--scan-cyan);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ HERO ═══════════════════ -->
+<section class="hero">
+  <div class="grid-bg"></div>
+
+  <!-- Radiological orientation labels: R/L (right/left) A/P (anterior/posterior) -->
+  <div class="orient tl mono">▢ A</div>
+  <div class="orient tr mono">L ▢</div>
+  <div class="orient bl mono">▢ R</div>
+  <div class="orient br mono">P ▢</div>
+
+  <div class="topbar">
+    <div class="topbar-left">
+      <span>Biewer / v1.0</span>
+      <span>Medical imaging plugin</span>
+    </div>
+    <div class="topbar-right">
+      <span><span class="status-dot"></span>Live</span>
+    </div>
+  </div>
+
+  <div class="hero-body">
+
+    <!-- ─── ANIMATED ICON ─── -->
+    <div class="hero-icon">
+      <svg viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Biewer">
+        <rect width="1024" height="1024" rx="224" fill="#0F6E56"/>
+
+        <!-- Scan line (behind bars) -->
+        <rect id="scan-line" x="80" y="510" width="864" height="4" rx="2" fill="#4EC5DC" opacity="0.6"/>
+
+        <!-- Echo Wave bars -->
+        <rect id="bar-0" x="152" y="442" width="80" height="140" rx="20" fill="#FFFFFF"/>
+        <rect id="bar-1" x="312" y="312" width="80" height="400" rx="20" fill="#FFFFFF"/>
+        <rect id="bar-2" x="472" y="156" width="80" height="712" rx="20" fill="#FFFFFF"/>
+        <rect id="bar-3" x="632" y="312" width="80" height="400" rx="20" fill="#FFFFFF"/>
+        <rect id="bar-4" x="792" y="442" width="80" height="140" rx="20" fill="#FFFFFF"/>
+
+        <!-- Reticle ring (drawn on load) -->
+        <circle id="reticle-ring" cx="512" cy="512" r="380" stroke="#4EC5DC" stroke-width="10" opacity="0.9"/>
+
+        <!-- Emanating pulse -->
+        <circle id="pulse-ring" cx="512" cy="512" r="380" stroke="#4EC5DC" stroke-width="6" fill="none"/>
+
+        <!-- Cardinal marks -->
+        <g class="cardinal">
+          <line x1="100" y1="512" x2="140" y2="512" stroke="#4EC5DC" stroke-width="10" stroke-linecap="round"/>
+          <line x1="884" y1="512" x2="924" y2="512" stroke="#4EC5DC" stroke-width="10" stroke-linecap="round"/>
+          <line x1="512" y1="100" x2="512" y2="140" stroke="#4EC5DC" stroke-width="10" stroke-linecap="round"/>
+          <line x1="512" y1="884" x2="512" y2="924" stroke="#4EC5DC" stroke-width="10" stroke-linecap="round"/>
+        </g>
+
+        <!-- Focal marker -->
+        <circle id="focal-ring" cx="512" cy="512" r="42" fill="#0F6E56" stroke="#4EC5DC" stroke-width="8"/>
+        <circle id="focal-dot" cx="512" cy="512" r="10" fill="#4EC5DC"/>
+      </svg>
+    </div>
+
+    <!-- ─── COPY ─── -->
+    <div class="hero-copy">
+      <div class="eyebrow mono">A plugin by BLAH</div>
+      <h1 class="wordmark">B<span class="i-dot">i</span>ewer</h1>
+      <p class="tagline">The wave, focused on the scan.</p>
+      <p class="subtitle">Biewer는 BLAH의 Echo Wave를 의료 영상 위에 겹치는 렌즈입니다. 3D 볼륨, MPR, MIP, 세그멘테이션을 한 인터페이스에서.</p>
+      <div class="version-row mono">
+        <span><strong>PLUGIN</strong> · v1.0</span>
+        <span>NIFTI · DICOM</span>
+        <span>VTK · Cornerstone</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ STORY ═══════════════════ -->
+<section class="story">
+  <div class="story-inner">
+    <div>
+      <div class="story-eyebrow mono">The concept · Focus Wave</div>
+      <h2>BLAH의 <em>파장</em>을 스캔 위에 <em>겹쳐 봅니다.</em></h2>
+      <p>BLAH의 로고는 정보의 울림입니다. 5개 막대의 실루엣은 중심에서 시작해 좌우로 퍼지는 소리의 형태를 담고 있습니다.</p>
+      <p>Biewer는 그 파장 위에 하나를 더합니다 — <strong style="color: var(--deep-teal)">시선의 레티클</strong>. 방사선 뷰어의 십자선, 좌표 그리드, 방위 표기 같은 임상 계기의 어휘가 브랜드의 일부가 됩니다. 결과는 장식이 아니라 도구처럼 보이는 아이덴티티입니다.</p>
+      <p>부모 브랜드가 티얼을 유지하는 동안, Biewer는 <strong class="mono" style="color: var(--deep-teal); font-size: 15px">#4EC5DC</strong> Scan Cyan을 자기 시그니처로 가져갑니다. 하나의 색이 하나의 역할을 맡습니다.</p>
+    </div>
+
+    <div class="palette">
+      <div class="palette-row">
+        <div class="swatch" style="background:#04342C"></div>
+        <div class="swatch-info">
+          <span class="swatch-name">Scanner Black</span>
+          <span class="swatch-role">뷰어 배경 · 텍스트</span>
+        </div>
+        <span class="swatch-hex">#04342C</span>
+      </div>
+      <div class="palette-row">
+        <div class="swatch" style="background:#0F6E56"></div>
+        <div class="swatch-info">
+          <span class="swatch-name">Deep Teal</span>
+          <span class="swatch-role">BLAH 계승 · 아이콘 배경</span>
+        </div>
+        <span class="swatch-hex">#0F6E56</span>
+      </div>
+      <div class="palette-row">
+        <div class="swatch" style="background:#4EC5DC"></div>
+        <div class="swatch-info">
+          <span class="swatch-name">Scan Cyan</span>
+          <span class="swatch-role">레티클 · 계측 오버레이 (신규)</span>
+        </div>
+        <span class="swatch-hex">#4EC5DC</span>
+      </div>
+      <div class="palette-row">
+        <div class="swatch" style="background:#FFFFFF; border-color:rgba(0,0,0,0.12)"></div>
+        <div class="swatch-info">
+          <span class="swatch-name">Signal White</span>
+          <span class="swatch-role">파형 · 콘텐츠</span>
+        </div>
+        <span class="swatch-hex">#FFFFFF</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ FEATURES ═══════════════════ -->
+<section class="features">
+  <div class="features-inner">
+    <h2>정밀하게 <em style="font-style:normal;color:var(--scan-cyan)">보이고</em>, 정확하게 <em style="font-style:normal;color:var(--scan-cyan)">잰다.</em></h2>
+
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="feature-num mono">01 / VOLUME</div>
+        <svg class="feature-icon" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M6 12L20 5L34 12V28L20 35L6 28V12Z"/>
+          <path d="M6 12L20 19L34 12" stroke-linejoin="round"/>
+          <path d="M20 19V35"/>
+        </svg>
+        <h3>3D Volume Rendering</h3>
+        <p>NIfTI, DICOM 볼륨을 VTK.js 기반으로 실시간 렌더링합니다. Atrophy, Vessel 등 프리셋을 그대로 사용할 수 있습니다.</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-num mono">02 / SLICING</div>
+        <svg class="feature-icon" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="4" y="4" width="14" height="14" rx="1"/>
+          <rect x="22" y="4" width="14" height="14" rx="1"/>
+          <rect x="4" y="22" width="14" height="14" rx="1"/>
+          <circle cx="29" cy="29" r="6"/>
+          <line x1="29" y1="23" x2="29" y2="35"/>
+          <line x1="23" y1="29" x2="35" y2="29"/>
+        </svg>
+        <h3>MPR & MIP</h3>
+        <p>Axial, Sagittal, Coronal의 세 평면을 동기화된 십자선으로 탐색합니다. Maximum intensity projection도 한 클릭.</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-num mono">03 / MEASURE</div>
+        <svg class="feature-icon" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 32L32 8" stroke-linecap="round"/>
+          <circle cx="8" cy="32" r="3"/>
+          <circle cx="32" cy="8" r="3"/>
+          <path d="M12 28L14 30" stroke-linecap="round"/>
+          <path d="M16 24L18 26" stroke-linecap="round"/>
+          <path d="M20 20L22 22" stroke-linecap="round"/>
+          <path d="M24 16L26 18" stroke-linecap="round"/>
+        </svg>
+        <h3>Measurements</h3>
+        <p>거리·각도·ROI·Hounsfield 히스토그램을 픽셀 정확도로 측정합니다. 어노테이션은 서버에 세션 단위로 저장됩니다.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ FOOTER ═══════════════════ -->
+<footer>
+  <div class="parent">
+    <div class="parent-mark" aria-hidden="true">
+      <span style="height:6px"></span>
+      <span style="height:12px"></span>
+      <span style="height:18px"></span>
+      <span style="height:12px"></span>
+      <span style="height:6px"></span>
+    </div>
+    <span>A precision instrument by BLAH</span>
+  </div>
+  <div>© 2026 BLAH · Biewer v1.0</div>
+</footer>
+
+</body>
+</html>

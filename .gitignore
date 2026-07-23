@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tgz
+*.log
+.DS_Store
+.npmrc
+.pnpm-store/
+
+# example artifacts
+examples/**/verify-*.png
+examples/**/.preview.log
+examples/**/.dev.log

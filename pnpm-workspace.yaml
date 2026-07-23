@@ -1,0 +1,7 @@
+packages:
+  - 'packages/*'
+  - 'examples/*'
+
+# esbuild ships prebuilt platform binaries; allow its install script (used by vite + tsup).
+allowBuilds:
+  esbuild: true

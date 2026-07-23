@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 60" fill="none" role="img" aria-label="Biewer">
+  <title>Biewer</title>
+  <g transform="translate(0, 0)">
+    <rect x="0" y="23" width="6" height="14" rx="2" fill="#0F6E56"/>
+    <rect x="12" y="13" width="6" height="34" rx="2" fill="#0F6E56"/>
+    <rect x="24" y="3" width="6" height="54" rx="2" fill="#0F6E56"/>
+    <rect x="36" y="13" width="6" height="34" rx="2" fill="#0F6E56"/>
+    <rect x="48" y="23" width="6" height="14" rx="2" fill="#0F6E56"/>
+    <circle cx="27" cy="30" r="7" stroke="#4EC5DC" stroke-width="2.2" fill="#FFFFFF"/>
+    <circle cx="27" cy="30" r="1.8" fill="#4EC5DC"/>
+  </g>
+  <text x="76" y="46" font-family="Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="42" font-weight="500" fill="#0F6E56" letter-spacing="-1">Biewer</text>
+</svg>
