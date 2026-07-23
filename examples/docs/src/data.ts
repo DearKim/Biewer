@@ -11,9 +11,9 @@ export type FmtLabel = 'NIfTI' | 'DICOM' | 'MP4' | 'PNG' | 'ZIP';
 const NIIVUE = 'https://niivue.github.io/niivue-demo-images';
 const PYDICOM = 'https://raw.githubusercontent.com/pydicom/pydicom/main/src/pydicom/data/test_files';
 const PYDATA = 'https://raw.githubusercontent.com/pydicom/pydicom-data/master/data_store/data';
-// Small brain-MR cine (rendered from the MNI152 volume), same-origin & fast.
-// Replaces a large remote clip so the video example loads instantly.
-const MED_VIDEO = '/samples/brain-cine.webm';
+// Real endoscopic-surgery cine (from the OHIF clinical sample), re-encoded to a
+// small same-origin webm so the video example loads instantly.
+const MED_VIDEO = '/samples/endo-cine.webm';
 // PNG image stack — real brain MR axial slices (rendered from the MNI152 volume),
 // so the image-decode path shows medical content, not logos.
 const IMG_STACK = Array.from({ length: 12 }, (_, i) => `/samples/img${i + 1}.png`);
@@ -35,7 +35,7 @@ export const SERIES: Series[] = [
   // current study (rail)
   { id: 's1', title: 'Brain MR (MNI152)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 190, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${NIIVUE}/mni152.nii.gz` } },
   { id: 's2', title: 'MR — multiframe', modality: 'MR · DICOM', fmt: 'DICOM', hueBase: 30, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${PYDATA}/emri_small.dcm` } },
-  { id: 's3', title: 'Brain MR cine', modality: 'Video · webm', fmt: 'MP4', hueBase: 320, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: MED_VIDEO } },
+  { id: 's3', title: 'Endoscopy cine', modality: 'Video · webm', fmt: 'MP4', hueBase: 320, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: MED_VIDEO } },
   { id: 's4', title: 'Perfusion (pCASL)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 100, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${NIIVUE}/pcasl.nii.gz` } },
   // prior study (rail, follow-up)
   { id: 'p1', title: 'Brain MR (T1)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 205, study: 'prior', date: '2026-01-12', rail: true, source: { kind: 'url', url: `${NIIVUE}/chris_t1.nii.gz` } },
@@ -127,7 +127,7 @@ export const EXAMPLES: Example[] = [
   // --- Output modes ---
   { id: 'slice', category: 'Output modes', title: 'Slice scroll', desc: 'Manual frame navigation (wheel / scrollbar / keyboard), rAF-coalesced.', kind: 'output', rows: 1, cols: 1, series: ['s1'], mode: 'slice' },
   { id: 'cine', category: 'Output modes', title: 'Cine (auto play)', desc: 'Auto-advance frames — play / pause / stop and speed. Works on volumes and video.', kind: 'output', rows: 1, cols: 1, series: ['s2'], mode: 'auto' },
-  { id: 'video', category: 'Output modes', title: 'Video (mp4 / webm)', desc: 'A brain-MR cine video sampled to frames; scroll to seek or play as cine. (mp4 and webm share the seek-based decode path.)', kind: 'output', rows: 1, cols: 1, series: ['s3'], mode: 'auto', format: 'mp4' },
+  { id: 'video', category: 'Output modes', title: 'Video (mp4 / webm)', desc: 'A real endoscopic-surgery cine sampled to frames; scroll to seek or play as cine. (mp4 and webm share the seek-based decode path.)', kind: 'output', rows: 1, cols: 1, series: ['s3'], mode: 'auto', format: 'mp4' },
   { id: 'sync-frames', category: 'Output modes', title: 'Frame-synced views', desc: 'One PlaybackController bound to many views keeps frames in sync.', kind: 'output', rows: 1, cols: 2, series: ['s1', 'p1'], mode: 'slice' },
 
   // --- Compare ---
