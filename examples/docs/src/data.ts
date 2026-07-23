@@ -13,7 +13,9 @@ const PYDICOM = 'https://raw.githubusercontent.com/pydicom/pydicom/main/src/pydi
 const PYDATA = 'https://raw.githubusercontent.com/pydicom/pydicom-data/master/data_store/data';
 // OHIF/Cornerstone sample clinical cine (ultrasound-style), CORS-enabled, streamed.
 const MED_MP4 = 'https://ohif-assets.s3.us-east-2.amazonaws.com/video/rendered.mp4';
-const IMG_STACK = ['/samples/img1.png', '/samples/img2.png', '/samples/img3.png'];
+// PNG image stack — real brain MR axial slices (rendered from the MNI152 volume),
+// so the image-decode path shows medical content, not logos.
+const IMG_STACK = Array.from({ length: 12 }, (_, i) => `/samples/img${i + 1}.png`);
 
 export interface Series {
   id: string;
@@ -38,8 +40,8 @@ export const SERIES: Series[] = [
   { id: 'p1', title: 'Brain MR (T1)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 205, study: 'prior', date: '2026-01-12', rail: true, source: { kind: 'url', url: `${NIIVUE}/chris_t1.nii.gz` } },
   { id: 'p2', title: 'CT (small)', modality: 'CT · DICOM', fmt: 'DICOM', hueBase: 45, study: 'prior', date: '2026-01-12', rail: true, source: { kind: 'url', url: `${PYDICOM}/CT_small.dcm` } },
   // format-demo sources (not in the rail)
-  { id: 'img', title: 'Image stack', modality: 'PNG', fmt: 'PNG', hueBase: 260, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: IMG_STACK } },
-  { id: 'zip', title: 'Image archive', modality: 'ZIP', fmt: 'ZIP', hueBase: 280, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: '/samples/stack.zip' } },
+  { id: 'img', title: 'Brain MR — PNG slices', modality: 'MR · PNG', fmt: 'PNG', hueBase: 200, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: IMG_STACK } },
+  { id: 'zip', title: 'Brain MR — PNG archive', modality: 'MR · ZIP', fmt: 'ZIP', hueBase: 210, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: '/samples/stack.zip' } },
   { id: 'jls', title: 'MR — JPEG-LS', modality: 'MR · DICOM/JPEG-LS', fmt: 'DICOM', hueBase: 15, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: `${PYDATA}/emri_small_jpeg_ls_lossless.dcm` } },
 ];
 
@@ -114,11 +116,11 @@ export const EXAMPLES: Example[] = [
   { id: 'layout', category: 'Layouts', title: 'Grid layout', desc: 'Arrange viewports in any grid — pick a preset (1×1 … 4×2) from the Grid dropdown, or draw a custom R×C grid with the picker. The plugin never sees a "layout"; you size the CSS grid and it renders one view per cell.', kind: 'layout', rows: 2, cols: 2, custom: true, series: ['s1', 's2', 's3', 's4'] },
 
   // --- Basics (format) — real fetchable data ---
-  { id: 'basic-stack', category: 'Basics', title: 'Basic image stack', desc: 'A stack of PNG images decoded to scrollable frames (browser-native).', kind: 'format', rows: 1, cols: 1, series: ['img'], format: 'png' },
-  { id: 'web-images', category: 'Basics', title: 'Web images (PNG/JPG)', desc: 'Ordinary web images via the browser-native decode path.', kind: 'format', rows: 1, cols: 1, series: ['img'], format: 'png' },
+  { id: 'basic-stack', category: 'Basics', title: 'Basic image stack', desc: 'A stack of brain-MR PNG slices decoded to scrollable frames (browser-native).', kind: 'format', rows: 1, cols: 1, series: ['img'], format: 'png' },
+  { id: 'web-images', category: 'Basics', title: 'Web images (PNG/JPG)', desc: 'Web images (brain-MR PNGs) via the browser-native decode path.', kind: 'format', rows: 1, cols: 1, series: ['img'], format: 'png' },
   { id: 'nifti', category: 'Basics', title: 'NIfTI volume', desc: 'A real .nii.gz volume (NiiVue MNI152) — gunzipped and sliced along the chosen axis.', kind: 'format', rows: 1, cols: 1, series: ['s1'], format: 'nii.gz' },
   { id: 'dicom', category: 'Basics', title: 'DICOM series', desc: 'A real uncompressed multiframe DICOM (pydicom emri_small) as one FrameSource.', kind: 'format', rows: 1, cols: 1, series: ['s2'], format: 'dcm' },
-  { id: 'archive', category: 'Basics', title: 'Archive (zip / gz)', desc: 'Unwrap a .zip of images (or .gz, as used by .nii.gz) and re-detect the inner format.', kind: 'format', rows: 1, cols: 1, series: ['zip'], format: 'zip' },
+  { id: 'archive', category: 'Basics', title: 'Archive (zip / gz)', desc: 'Unwrap a .zip of brain-MR PNG slices (or .gz, as used by .nii.gz) and re-detect the inner format.', kind: 'format', rows: 1, cols: 1, series: ['zip'], format: 'zip' },
   { id: 'jpeg-ls', category: 'Basics', title: 'JPEG-LS (compressed DICOM)', desc: 'A real JPEG-LS lossless DICOM (pydicom emri), decoded from scratch (LOCO-I) — byte-identical to its uncompressed twin.', kind: 'format', rows: 1, cols: 1, series: ['jls'], format: 'jls' },
 
   // --- Output modes ---
