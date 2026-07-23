@@ -1,9 +1,13 @@
 // DICOM decoder (from scratch) for UNCOMPRESSED transfer syntaxes:
 //   1.2.840.10008.1.2   Implicit VR Little Endian
 //   1.2.840.10008.1.2.1 Explicit VR Little Endian
-// Compressed pixel data (JPEG / JPEG-LS / JPEG2000, transfer syntax .4.xx)
-// reports DECODE_FAILED — a from-scratch image codec is out of scope.
+// and JPEG-LS (LOCO-I) encapsulated pixel data:
+//   1.2.840.10008.1.2.4.80 JPEG-LS Lossless
+//   1.2.840.10008.1.2.4.81 JPEG-LS Near-Lossless (decoded when NEAR=0)
+// Other compressed pixel data (JPEG baseline .50/.51, JPEG2000 .90/.91, RLE .5x)
+// still reports DECODE_FAILED — those codecs are out of scope.
 import type { BiewerDecoder, FrameSource, FramePixels, PixelType } from '../types';
+import { decodeJpegLS } from './jpegls';
 
 function decodeErr(message: string): Error {
   const e: Error & { code?: string } = new Error(message);
@@ -43,7 +47,11 @@ function dicomFrameSource(bytes: Uint8Array): FrameSource {
 
   const implicit = transferSyntax === '1.2.840.10008.1.2';
   const bigEndian = transferSyntax === '1.2.840.10008.1.2.2';
-  if (/^1\.2\.840\.10008\.1\.2\.4\./.test(transferSyntax) || /^1\.2\.840\.10008\.1\.2\.5/.test(transferSyntax)) {
+  // JPEG-LS lossless (.80) and near-lossless (.81) are decoded from the
+  // encapsulated pixel data below. Every other .4.xx / .5x compressed syntax
+  // is still unsupported.
+  const jpegLS = transferSyntax === '1.2.840.10008.1.2.4.80' || transferSyntax === '1.2.840.10008.1.2.4.81';
+  if (!jpegLS && (/^1\.2\.840\.10008\.1\.2\.4\./.test(transferSyntax) || /^1\.2\.840\.10008\.1\.2\.5/.test(transferSyntax))) {
     throw decodeErr(`compressed DICOM (transfer syntax ${transferSyntax}) is not supported`);
   }
 
@@ -80,6 +88,18 @@ function dicomFrameSource(bytes: Uint8Array): FrameSource {
 
   if (pixelOffset < 0 || !rows || !cols) throw decodeErr('DICOM missing pixel data or dimensions');
 
+  if (jpegLS) {
+    return jpegLSFrameSource(bytes, dv, pixelOffset, {
+      rows,
+      cols,
+      frames,
+      bitsAlloc,
+      pixelRep,
+      spacing: ps ? [ps[1], ps[0], 1] : undefined,
+      defaultWindow: wc != null && ww != null ? { wc, ww } : undefined,
+    });
+  }
+
   const bytesPerSample = bitsAlloc <= 8 ? 1 : 2;
   const frameLen = rows * cols * samples * bytesPerSample;
   frames = Math.max(1, Math.min(frames, Math.floor(pixelLength / frameLen)));
@@ -115,6 +135,88 @@ function dicomFrameSource(bytes: Uint8Array): FrameSource {
       spacing: ps ? [ps[1], ps[0], 1] : undefined,
       defaultWindow: wc != null && ww != null ? { wc, ww } : undefined,
     },
+    async getFrame(index) {
+      if (disposed) throw new Error('FrameSource disposed');
+      const i = Math.max(0, Math.min(frames - 1, index | 0));
+      let f = cache.get(i);
+      if (!f) { f = frame(i); cache.set(i, f); }
+      return f;
+    },
+    dispose() { disposed = true; cache.clear(); },
+  };
+}
+
+interface JpegLSMeta {
+  rows: number;
+  cols: number;
+  frames: number;
+  bitsAlloc: number;
+  pixelRep: number;
+  spacing?: [number, number, number];
+  defaultWindow?: { wc: number; ww: number };
+}
+
+/**
+ * Build a gray FrameSource from JPEG-LS encapsulated pixel data. `itemsStart`
+ * points at the first item tag (FFFE,E000) — the Basic Offset Table — followed
+ * by one or more fragment items and the Sequence Delimitation Item (FFFE,E0DD).
+ * Frames are decoded lazily via decodeJpegLS and cached.
+ */
+function jpegLSFrameSource(bytes: Uint8Array, dv: DataView, itemsStart: number, m: JpegLSMeta): FrameSource {
+  // Collect the encapsulation items (first is the Basic Offset Table).
+  const items: Uint8Array[] = [];
+  let p = itemsStart;
+  while (p + 8 <= bytes.length) {
+    const group = dv.getUint16(p, true);
+    const elem = dv.getUint16(p + 2, true);
+    if (group !== 0xfffe || elem === 0xe0dd) break; // sequence delimiter or unexpected tag
+    if (elem !== 0xe000) break;
+    const len = dv.getUint32(p + 4, true);
+    if (len === 0xffffffff || p + 8 + len > bytes.length) break;
+    items.push(bytes.subarray(p + 8, p + 8 + len));
+    p = p + 8 + len;
+  }
+  const fragments = items.slice(1); // drop the Basic Offset Table
+  if (fragments.length === 0) throw decodeErr('DICOM JPEG-LS: no pixel data fragments');
+
+  // One fragment per frame when the counts line up; otherwise treat the whole
+  // encapsulated payload as a single frame's codestream.
+  let streams: Uint8Array[];
+  if (fragments.length === m.frames) {
+    streams = fragments;
+  } else {
+    let total = 0;
+    for (const f of fragments) total += f.length;
+    const merged = new Uint8Array(total);
+    let o = 0;
+    for (const f of fragments) { merged.set(f, o); o += f.length; }
+    streams = [merged];
+  }
+
+  const frames = streams.length;
+  const bytesPerSample = m.bitsAlloc <= 8 ? 1 : 2;
+  const pixelType: PixelType = bytesPerSample === 1 ? 'gray8' : 'gray16';
+  const cache = new Map<number, FramePixels>();
+  let disposed = false;
+
+  function frame(i: number): FramePixels {
+    const decoded = decodeJpegLS(streams[i]);
+    let data: FramePixels['data'];
+    if (bytesPerSample === 1) {
+      data = decoded.data instanceof Uint8Array ? decoded.data : Uint8Array.from(decoded.data);
+    } else {
+      const u16 = decoded.data instanceof Uint16Array ? decoded.data : Uint16Array.from(decoded.data);
+      // Signed pixel representation reinterprets the same 16-bit samples as Int16.
+      data = m.pixelRep === 1 ? new Int16Array(u16.buffer, u16.byteOffset, u16.length) : u16;
+    }
+    return { width: m.cols, height: m.rows, pixelType, data };
+  }
+
+  return {
+    frameCount: frames,
+    frameSize: { width: m.cols, height: m.rows },
+    pixelType,
+    meta: { format: 'dicom', spacing: m.spacing, defaultWindow: m.defaultWindow },
     async getFrame(index) {
       if (disposed) throw new Error('FrameSource disposed');
       const i = Math.max(0, Math.min(frames - 1, index | 0));

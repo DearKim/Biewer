@@ -40,6 +40,7 @@ export const SERIES: Series[] = [
   // format-demo sources (not in the rail)
   { id: 'img', title: 'Image stack', modality: 'PNG', fmt: 'PNG', hueBase: 260, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: IMG_STACK } },
   { id: 'zip', title: 'Image archive', modality: 'ZIP', fmt: 'ZIP', hueBase: 280, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: '/samples/stack.zip' } },
+  { id: 'jls', title: 'MR — JPEG-LS', modality: 'MR · DICOM/JPEG-LS', fmt: 'DICOM', hueBase: 15, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: `${PYDATA}/emri_small_jpeg_ls_lossless.dcm` } },
 ];
 
 export const CURRENT_SERIES = SERIES.filter((s) => s.study === 'current' && s.rail);
@@ -118,7 +119,7 @@ export const EXAMPLES: Example[] = [
   { id: 'nifti', category: 'Basics', title: 'NIfTI volume', desc: 'A real .nii.gz volume (NiiVue MNI152) — gunzipped and sliced along the chosen axis.', kind: 'format', rows: 1, cols: 1, series: ['s1'], format: 'nii.gz' },
   { id: 'dicom', category: 'Basics', title: 'DICOM series', desc: 'A real uncompressed multiframe DICOM (pydicom emri_small) as one FrameSource.', kind: 'format', rows: 1, cols: 1, series: ['s2'], format: 'dcm' },
   { id: 'archive', category: 'Basics', title: 'Archive (zip / gz)', desc: 'Unwrap a .zip of images (or .gz, as used by .nii.gz) and re-detect the inner format.', kind: 'format', rows: 1, cols: 1, series: ['zip'], format: 'zip' },
-  { id: 'jpeg-ls', category: 'Basics', title: 'JPEG-LS (compressed DICOM)', desc: 'JPEG-LS is a compressed DICOM transfer syntax; decoding compressed pixels needs a WASM codec (later milestone). Uncompressed DICOM works today.', kind: 'format', rows: 1, cols: 1, series: ['s2'], format: 'jls', planned: true },
+  { id: 'jpeg-ls', category: 'Basics', title: 'JPEG-LS (compressed DICOM)', desc: 'A real JPEG-LS lossless DICOM (pydicom emri), decoded from scratch (LOCO-I) — byte-identical to its uncompressed twin.', kind: 'format', rows: 1, cols: 1, series: ['jls'], format: 'jls' },
 
   // --- Output modes ---
   { id: 'slice', category: 'Output modes', title: 'Slice scroll', desc: 'Manual frame navigation (wheel / scrollbar / keyboard), rAF-coalesced.', kind: 'output', rows: 1, cols: 1, series: ['s1'], mode: 'slice' },

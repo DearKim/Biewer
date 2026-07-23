@@ -36,8 +36,15 @@ This package follows [Semantic Versioning](https://semver.org/).
 - **NIfTI 3축 리샘플 + orientation.** axial/coronal/sagittal 을 물리 extent(`dim·spacing`) 기준 nearest-neighbour 로 등방 픽셀에 리샘플(비등방 볼륨 종횡비 교정) + sform/qform 으로 축별 flip 정규화. float64 datatype 추가.
 - **영상 URL 스트리밍.** mp4/webm URL 은 통째 다운로드 대신 `crossOrigin=anonymous` 진행형 스트림(대용량 임상 cine 실용적); webm sniff 추가. 볼륨/cine 은 로드 시 중간 프레임에서 시작.
 
+- **JPEG-LS (compressed DICOM) 디코더 — from scratch (LOCO-I).** `decode/jpegls.ts` 가 T.87
+  lossless 를 직접 디코드(regular/run/run-interruption 모드, Golomb-Rice, 컨텍스트 모델링, 0xFF de-stuffing).
+  `dicom.ts` 가 encapsulated pixel data(Basic Offset Table + fragment items)를 파싱해 transfer syntax
+  `.4.80`/`.4.81`(NEAR=0) 를 프레임별 디코드. **독립 오라클 검증**: pydicom `emri_small_jpeg_ls_lossless.dcm`
+  10프레임 × 4096샘플이 비압축 twin(`emri_small.dcm`)과 **byte-exact 일치**. 8/16-bit·signed 지원.
+  (near-lossless NEAR>0·다중성분·interleave 1/2·restart interval 은 미지원 → 깨끗이 DECODE_FAILED. 기타 압축 syntax 도 여전히 거부.)
+
 ### 후속 (미구현 — 스텁/계획)
 
-- DICOM 압축 코덱: JPEG-LS(진행 중), JPEG2000/RLE/Baseline
+- DICOM 압축 코덱 나머지: JPEG2000/RLE/JPEG Baseline, JPEG-LS near-lossless(NEAR>0)/color
 - gray 볼륨 WebGL(GPU) W/L 경로(현재 CPU LUT), 디코딩 Web Worker 오프로드, animated 이미지 프레임화
 - 볼륨 오블리크 reslice(현재 직교 3축), 측정 세트 렌더·편집·undo/redo (M4)

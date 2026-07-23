@@ -123,6 +123,20 @@ const cellDivs = (page) => page.evaluate(() => document.querySelectorAll('.stage
   results.windowLevel = !!afterWL && !!beforeWL && afterWL.sum !== beforeWL.sum;
   await page.evaluate(() => window.__biewer.tools.apply({ op: 'reset' })); // restore auto W/L
 
+  // JPEG-LS: real compressed DICOM decodes from scratch and paints
+  await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('JPEG-LS')); it && it.click(); });
+  results.jpegls = await page.evaluate((to) => new Promise((res) => {
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      const cell = document.querySelector('.stage .cell');
+      const cv = cell && cell.querySelector('canvas');
+      const err = cell && cell.querySelector('.bw-status--error');
+      if (err) { clearInterval(iv); res({ ok: false, err: err.textContent }); return; }
+      if (cv) { const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data; let nz = 0; for (let i = 0; i < d.length; i += 4) if (d[i]) nz++; if (nz > 1000) { clearInterval(iv); res({ ok: true, nz }); return; } }
+      if (Date.now() - t0 > to) { clearInterval(iv); res({ ok: false, err: 'timeout' }); }
+    }, 300);
+  }), 25000);
+
   // Layout example: 2×2 grid actually mounts 4 viewports (DOM canvas count)
   await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('Grid layout')); it && it.click(); });
   await page.waitForFunction(() => document.querySelectorAll('.stage biewer-view canvas').length >= 4, { timeout: 20000 });
@@ -183,7 +197,7 @@ const cellDivs = (page) => page.evaluate(() => document.querySelectorAll('.stage
     results.gridControls.presetOptions >= 6 && results.gridControls.hasIcon && results.gridControls.popoverHiddenInitially &&
     results.presetApply === 8 && results.picker.opened && results.picker.grewPast4 && results.picker.cells === 30 &&
     results.realMouse.grid === '3x3' && results.realMouse.cells === 9 &&
-    results.painted && results.frameChanged && results.windowLevel && results.cells >= 4 && results.duplicate &&
+    results.painted && results.frameChanged && results.windowLevel && results.jpegls.ok && results.cells >= 4 && results.duplicate &&
     results.incremental.kept0 && results.incremental.kept1 && results.incremental.kept3 && results.incremental.cell2Replaced &&
     results.howto.mode === 'howto' && results.howto.mentionsHttp && errors.length === 0;
   console.log(JSON.stringify({ ok, results }, null, 2));
