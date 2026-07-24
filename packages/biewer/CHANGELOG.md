@@ -46,6 +46,13 @@ This package follows [Semantic Versioning](https://semver.org/).
   헤드리스(ANGLE/SwiftShader WebGL2)에서 실제 CT 볼륨(NiiVue `CT_Abdo.nii.gz`) 디코드→3D 렌더 확인: 비어있지 않은 페인트 · 카메라 오빗 시 픽셀 변화 · DVR⇄MIP 재렌더 검증. per-instance(전역 없음), opt-in.
   (오블리크/컷플레인·transfer-function 에디터·3D 측정·서피스 메시는 후속.)
 
+- **다중 파일 DICOM 시리즈 → 볼륨 + 임의 축 MPR.** DICOM 디코더가 `ctx.extra`(폴더/zip 의 단일프레임 슬라이스들)를
+  하나의 볼륨으로 스택한다 — ImagePositionPatient 를 슬라이스 법선에 투영해 정렬(없으면 InstanceNumber, 없으면 입력 순),
+  z-spacing 은 슬라이스 간격 중앙값. gray 볼륨은 연속 그리드로 조립해 **공용 리샘플러**(`volumeFrameSource`, 기존 NIfTI 3축 경로)로
+  통과시켜 axial/coronal/sagittal 어느 축이든 **진짜 리슬라이스**된다(NIfTI 뿐 아니라 DICOM 시리즈도 MPR 가능). IOP 로 축 방향 정규화.
+  zip 아카이브도 다중 DICOM 엔트리를 같은 경로로 스택. 단일 multiframe(cine)의 native/axial 은 기존 경로 유지(무회귀).
+  헤드리스 검증: 합성 8슬라이스(순서 섞고 InstanceNumber 동일)를 위치순으로 정렬해 8프레임 볼륨으로 스택 + 3축이 서로 다르게 리슬라이스됨 확인.
+
 - **JPEG-LS (compressed DICOM) 디코더 — from scratch (LOCO-I).** `decode/jpegls.ts` 가 T.87
   lossless 를 직접 디코드(regular/run/run-interruption 모드, Golomb-Rice, 컨텍스트 모델링, 0xFF de-stuffing).
   `dicom.ts` 가 encapsulated pixel data(Basic Offset Table + fragment items)를 파싱해 transfer syntax

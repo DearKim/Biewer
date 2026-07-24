@@ -1,11 +1,11 @@
 import './styles.css';
 import '@deepnoid/biewer/wc';
-import { createToolController, createPlaybackController } from '@deepnoid/biewer';
-import type { ToolController, PlaybackController, BiewerTool } from '@deepnoid/biewer';
+import { createToolController, createPlaybackController, createVolume } from '@deepnoid/biewer';
+import type { ToolController, PlaybackController, BiewerTool, BiewerSource } from '@deepnoid/biewer';
 import type { BiewerViewElement, BiewerVolumeElement } from '@deepnoid/biewer/wc';
 import {
   SERIES, CURRENT_SERIES, PRIOR_SERIES, EXAMPLES, EXAMPLE_CATEGORIES, HOW_TO, PROP_INFO, GRID_MAX, GRID_PRESETS,
-  codeFor, propsFor, askFor, realizeSeries, makeThumb, type Series, type Example, type CellView,
+  codeFor, propsFor, askFor, realizeSeries, makeThumb, type Series, type Example, type CellView, type FmtLabel,
 } from './data';
 
 // ---------------------------------------------------------------------------
@@ -48,7 +48,8 @@ function el(tag: string, cls?: string, html?: string): HTMLElement {
   if (html != null) e.innerHTML = html;
   return e;
 }
-const seriesById = (id: string): Series => SERIES.find((s) => s.id === id)!;
+const uploads: Series[] = []; // user-uploaded volumes (file / zip / folder)
+const seriesById = (id: string): Series => uploads.find((s) => s.id === id) ?? SERIES.find((s) => s.id === id)!;
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -170,12 +171,34 @@ function renderStudio(): void {
     </main>
     <aside id="right"></aside>
   </div>`;
+  wireStageUpload();
   renderLeft();
   renderRight();
   renderToolbar();
   renderPlayback();
   renderComments();
   void rebuildStage();
+}
+
+/** Let the whole stage accept an OS file/folder drop (→ MPR + 3D). Series drags
+ *  carry 'text/biewer-series' and are handled per-cell; OS drops carry Files.
+ *  The drop hint is a CSS ::after so it never appears as a stage child (which
+ *  rebuildStage treats as viewport cells). */
+function wireStageUpload(): void {
+  const stage = $('#stage');
+  const isFiles = (e: DragEvent) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+  stage.addEventListener('dragover', (e) => {
+    if (!isFiles(e)) return; // series drags handled per-cell
+    e.preventDefault(); stage.classList.add('dropping');
+  });
+  stage.addEventListener('dragleave', (e) => {
+    if (!stage.contains(e.relatedTarget as Node | null)) stage.classList.remove('dropping');
+  });
+  stage.addEventListener('drop', (e) => {
+    if (!isFiles(e)) return;
+    e.preventDefault(); stage.classList.remove('dropping');
+    void gatherDropped(e.dataTransfer!).then((files) => { if (files.length) loadUpload(files); });
+  });
 }
 
 // ---- left nav ----
@@ -233,6 +256,94 @@ function applyExample(ex: Example): void {
   void rebuildStage().then(maybeNudgeMiddle); // kept views already know their frameCount
 }
 
+// ---- upload (file / zip / folder) → MPR + 3D --------------------------------
+function guessFmt(name: string): FmtLabel {
+  const n = name.toLowerCase();
+  if (n.endsWith('.nii.gz') || n.endsWith('.nii') || n.endsWith('.gz')) return 'NIfTI';
+  if (n.endsWith('.zip')) return 'ZIP';
+  return 'DICOM'; // .dcm or extensionless (typical DICOM export)
+}
+/** Turn dropped/selected file(s) into an "uploaded" series and show it as MPR + 3D.
+ *  Single file (incl. .zip / .nii.gz) → one file source; many files (a folder or
+ *  a DICOM series) → a File[] source that the decoder stacks into a volume. */
+function loadUpload(files: File[]): void {
+  const usable = files.filter((f) => f.size > 0 && !/^\./.test(f.name)); // skip dotfiles
+  if (!usable.length) return;
+  const single = usable.length === 1;
+  const source: BiewerSource = { kind: 'file', file: single ? usable[0] : usable };
+  const fmt: FmtLabel = single ? guessFmt(usable[0].name) : 'DICOM';
+  const modalityLabel = single ? fmt : 'DICOM series';
+  const title = single ? usable[0].name : `${usable.length} files (${(usable[0] as File & { webkitRelativePath?: string }).webkitRelativePath?.split('/')[0] || 'folder'})`;
+  const series: Series = {
+    id: 'upload', title, modality: `Uploaded · ${modalityLabel}`, fmt,
+    hueBase: 165, study: 'current', date: 'local', rail: false, source,
+  };
+  const idx = uploads.findIndex((u) => u.id === 'upload');
+  if (idx >= 0) uploads[idx] = series; else uploads.push(series);
+  void makeThumb(series).then(() => renderRight());
+
+  // show it in the MPR + 3D layout (all four viewports = the uploaded volume)
+  const ex = EXAMPLES.find((e) => e.id === 'mpr-3d')!;
+  applyExample(ex);
+  state.selected = state.selected.map(() => 'upload');
+  nudgedMiddle = false;
+  renderRight();
+  void rebuildStage().then(maybeNudgeMiddle);
+}
+/** Recursively collect files from a drop (handles dropped folders). */
+function readEntry(entry: FsEntry): Promise<File[]> {
+  return new Promise((resolve) => {
+    if (entry.isFile) { entry.file((f) => resolve([f]), () => resolve([])); return; }
+    if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const acc: FsEntry[] = [];
+      const readBatch = () => reader.readEntries((ents) => {
+        if (!ents.length) { Promise.all(acc.map(readEntry)).then((a) => resolve(a.flat())); return; }
+        acc.push(...ents); readBatch();
+      }, () => resolve([]));
+      readBatch();
+      return;
+    }
+    resolve([]);
+  });
+}
+async function gatherDropped(dt: DataTransfer): Promise<File[]> {
+  const items = dt.items;
+  if (items && items.length && typeof (items[0] as unknown as { webkitGetAsEntry?: unknown }).webkitGetAsEntry === 'function') {
+    const roots: FsEntry[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const e = (items[i] as unknown as { webkitGetAsEntry(): FsEntry | null }).webkitGetAsEntry();
+      if (e) roots.push(e);
+    }
+    if (roots.length) { const arrs = await Promise.all(roots.map(readEntry)); return arrs.flat(); }
+  }
+  return dt.files ? [...dt.files] : [];
+}
+interface FsEntry {
+  isFile: boolean; isDirectory: boolean;
+  file(cb: (f: File) => void, err?: () => void): void;
+  createReader(): { readEntries(cb: (e: FsEntry[]) => void, err?: () => void): void };
+}
+/** Toolbar upload group — File/ZIP button, Folder button (both feed loadUpload). */
+function uploadControls(): HTMLElement {
+  const grp = el('div', 'grp');
+  grp.appendChild(el('span', 'lbl', 'Upload'));
+  const fileInput = el('input') as HTMLInputElement;
+  fileInput.type = 'file'; fileInput.accept = '.nii,.nii.gz,.gz,.dcm,.zip'; fileInput.style.display = 'none';
+  fileInput.onchange = () => { if (fileInput.files?.length) loadUpload([...fileInput.files]); fileInput.value = ''; };
+  const fileBtn = el('button', 'tbtn', '⤒ File / ZIP') as HTMLButtonElement;
+  fileBtn.onclick = () => fileInput.click();
+  const dirInput = el('input') as HTMLInputElement;
+  dirInput.type = 'file'; dirInput.multiple = true; dirInput.style.display = 'none';
+  dirInput.setAttribute('webkitdirectory', ''); dirInput.setAttribute('directory', '');
+  dirInput.onchange = () => { if (dirInput.files?.length) loadUpload([...dirInput.files]); dirInput.value = ''; };
+  const dirBtn = el('button', 'tbtn', '⤒ Folder') as HTMLButtonElement;
+  dirBtn.onclick = () => dirInput.click();
+  grp.append(fileBtn, fileInput, dirBtn, dirInput);
+  grp.appendChild(el('span', 'hint-inline', 'nii · dcm · zip · DICOM folder — or drop onto the view'));
+  return grp;
+}
+
 // ---- right rail ----
 function serieButton(s: Series): HTMLButtonElement {
   const cells = state.selected.reduce<number[]>((a, x, i) => (x === s.id ? [...a, i + 1] : a), []);
@@ -257,6 +368,7 @@ function renderRight(): void {
     root.appendChild(el('h3', undefined, title));
     for (const s of list) root.appendChild(serieButton(s));
   };
+  if (uploads.length) group('Uploaded', uploads);
   group('Current study · ' + CURRENT_SERIES[0].date, CURRENT_SERIES);
   group('Prior study · Follow-up', PRIOR_SERIES);
 }
@@ -423,7 +535,12 @@ function renderToolbar(): void {
   root.appendChild(g);
   root.appendChild(el('div', 'sep'));
 
-  if (is3dActive()) { root.appendChild(vol3dControls()); return; }
+  if (is3dActive()) {
+    root.appendChild(vol3dControls());
+    root.appendChild(el('div', 'sep'));
+    root.appendChild(uploadControls());
+    return;
+  }
 
   const toolGrp = el('div', 'grp');
   toolGrp.appendChild(el('span', 'lbl', 'Tools'));
@@ -739,4 +856,4 @@ window.addEventListener('hashchange', route);
 void Promise.all(SERIES.map((s) => makeThumb(s))).then(() => renderRight());
 route();
 
-(window as unknown as { __biewer: unknown }).__biewer = { tools, playback, state, route, placeAt, setGrid, applyExample };
+(window as unknown as { __biewer: unknown }).__biewer = { tools, playback, state, route, placeAt, setGrid, applyExample, loadUpload, createVolume };

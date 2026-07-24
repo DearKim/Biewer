@@ -231,7 +231,7 @@ export function askFor(ex: Example): string {
       return `Using @deepnoid/biewer, expose ${ex.tool ?? 'measurement'} through a headless ToolController and my own toolbar buttons (tools.setActiveTool / tools.apply). scope:'all' applies to every view.`;
     case '3d':
       return ex.views
-        ? `Using @deepnoid/biewer, build a 2×2 MPR + 3D layout of ONE volume: three <BiewerView> planes with axis 'axial' / 'coronal' / 'sagittal' (each scrolls independently — bind NO shared PlaybackController so wheel steps that plane only), plus one <BiewerVolume> (createBiewerVolumeView) for interactive 3D. I own the CSS grid; the plugin renders each viewport. Framework-agnostic, no VTK.js.`
+        ? `Using @deepnoid/biewer, build a 2×2 MPR + 3D layout of ONE volume: three <BiewerView> planes with axis 'axial' / 'coronal' / 'sagittal' (each scrolls independently — bind NO shared PlaybackController so wheel steps that plane only), plus one <BiewerVolume> (createBiewerVolumeView) for interactive 3D. Let me upload my own data — a single file, a .zip, or a DICOM folder — via { kind: 'file', file: File | File[] } (a File[] of single-frame slices is stacked into one ordered volume) and show it in all four viewports. I own the CSS grid; the plugin renders each viewport. Framework-agnostic, no VTK.js.`
         : `Using @deepnoid/biewer, render a medical volume (.nii.gz / DICOM) in 3D with createBiewerVolumeView(el, { source, mode: '${ex.volMode ?? 'dvr'}' }). Drag orbits, wheel zooms. Give me toolbar buttons to toggle DVR ⇄ MIP (setMode), invert (setInvert), and reset the camera (setCamera). It must be framework-agnostic (no VTK.js) and run on WebGL2.`;
     default: return '';
   }

@@ -4,6 +4,7 @@ import type { BiewerDecoder, FrameSource, DecodeContext } from '../types';
 import { gunzip, unzip, naturalSort } from './bytes';
 import { resolveDecoder } from './registry';
 import { imageDecoder } from './image';
+import { dicomSeriesFrameSource } from './dicom';
 
 function decodeErr(code: string, message: string): Error {
   const e: Error & { code?: string } = new Error(message);
@@ -36,6 +37,9 @@ export const archiveDecoder: BiewerDecoder = {
       // an image zip → one N-frame stack
       return imageDecoder.decode(images[0].bytes, { ...ctx, filename: images[0].name, extra: images.slice(1).map((e) => e.bytes) });
     }
+    // a zip of DICOM slices → stack into one volume (ordered by position, resliceable)
+    const dicoms = entries.filter((e) => { const d = resolveDecoder(e.bytes, { filename: e.name }); return d?.name === 'dicom'; });
+    if (dicoms.length > 1) return await dicomSeriesFrameSource(dicoms.map((e) => e.bytes), ctx.axis);
     // otherwise dispatch the first supported entry as a single source
     for (const e of entries) {
       const d = resolveDecoder(e.bytes, { filename: e.name });

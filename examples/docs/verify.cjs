@@ -204,6 +204,65 @@ async function volStats(page) {
   results.mprVolume = !!mprVol && mprVol.bright > 300;
   await page.screenshot({ path: 'verify-mpr-3d.png' });
 
+  // Upload: a folder/series of single-frame DICOM slices → stacked into ONE
+  // volume (ordered by ImagePositionPatient, not file order/InstanceNumber),
+  // resliced to true MPR, and shown as MPR + 3D. Slices are synthesized in-page.
+  results.uploadVolume = await page.evaluate(async () => {
+    function buildDicom(n, z) {
+      const enc = new TextEncoder(); const parts = [];
+      const tag = (g, e, vr, val) => {
+        const long = vr === 'OW'; const head = new Uint8Array(long ? 12 : 8); const dv = new DataView(head.buffer);
+        dv.setUint16(0, g, true); dv.setUint16(2, e, true); head[4] = vr.charCodeAt(0); head[5] = vr.charCodeAt(1);
+        if (long) dv.setUint32(8, val.length, true); else dv.setUint16(6, val.length, true);
+        parts.push(head, val);
+      };
+      const ds = (s) => enc.encode(s.length % 2 ? s + ' ' : s);
+      const us = (v) => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, true); return b; };
+      tag(0x0018, 0x0050, 'DS', ds('1'));
+      tag(0x0020, 0x0013, 'IS', ds('1'));                    // constant InstanceNumber → force position sort
+      tag(0x0020, 0x0032, 'DS', ds('0\\0\\' + z));           // ImagePositionPatient (z varies)
+      tag(0x0020, 0x0037, 'DS', ds('1\\0\\0\\0\\1\\0'));     // axial orientation
+      tag(0x0028, 0x0002, 'US', us(1));
+      tag(0x0028, 0x0010, 'US', us(n)); tag(0x0028, 0x0011, 'US', us(n));
+      tag(0x0028, 0x0030, 'DS', ds('1\\1'));
+      tag(0x0028, 0x0100, 'US', us(16)); tag(0x0028, 0x0103, 'US', us(0));
+      const px = new Uint8Array(n * n * 2); const pv = new DataView(px.buffer);
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) pv.setUint16((y * n + x) * 2, z * 40 + x + y, true);
+      tag(0x7fe0, 0x0010, 'OW', px);
+      let len = 132; for (const p of parts) len += p.length;
+      const out = new Uint8Array(len); let o = 132;
+      out[128] = 0x44; out[129] = 0x49; out[130] = 0x43; out[131] = 0x4d;
+      for (const p of parts) { out.set(p, o); o += p.length; }
+      return out;
+    }
+    const zorder = [3, 7, 1, 5, 0, 6, 2, 4]; // shuffled; must be reordered to 0..7 by position
+    const files = zorder.map((z, i) => new File([buildDicom(16, z)], `slice${String(i).padStart(3, '0')}.dcm`, { type: 'application/dicom' }));
+    window.__testFiles = files;
+    const v = await window.__biewer.createVolume({ kind: 'file', file: files });
+    const [w, h, d] = v.dims;
+    const mean = (k) => { let s = 0; const b = k * w * h; for (let i = 0; i < w * h; i++) s += v.data[b + i]; return s / (w * h); };
+    let ordered = true; for (let k = 1; k < d; k++) if (!(mean(k) > mean(k - 1))) ordered = false;
+    return { slices: d, dims: v.dims, ordered };
+  });
+  await page.evaluate(() => window.__biewer.loadUpload(window.__testFiles));
+  await page.waitForFunction(() => {
+    const planes = [...document.querySelectorAll('#stage biewer-view canvas')];
+    if (planes.length !== 3 || !document.querySelector('#stage biewer-volume canvas')) return false;
+    return planes.every((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let nz = 0; for (let i = 0; i < d.length; i += 4) if (d[i]) nz++; return nz > 300; });
+  }, { timeout: 30000 });
+  results.upload = await page.evaluate(() => {
+    const planes = [...document.querySelectorAll('#stage biewer-view canvas')];
+    const sums = planes.map((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let s = 0; for (let i = 0; i < d.length; i += 4) s = (s + d[i]) % 2147483647; return s; });
+    return {
+      railHasUpload: [...document.querySelectorAll('#right h3')].some((h) => h.textContent === 'Uploaded'),
+      activeExample: window.__biewer.state.activeExample,
+      planes: planes.length,
+      distinctAxes: new Set(sums).size === sums.length, // reslice → 3 different planes (not axial×3)
+      hasVolume: !!document.querySelector('#stage biewer-volume canvas'),
+    };
+  });
+  await page.screenshot({ path: 'verify-upload.png' });
+
   // Layout example: 2×2 grid actually mounts 4 viewports (DOM canvas count)
   await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('Grid layout')); it && it.click(); });
   await page.waitForFunction(() => document.querySelectorAll('.stage biewer-view canvas').length >= 4, { timeout: 20000 });
@@ -267,6 +326,8 @@ async function volStats(page) {
     results.painted && results.frameChanged && results.windowLevel && results.jpegls.ok && results.cells >= 4 && results.duplicate &&
     results.volume3dPaint && results.volume3dRotate && results.volume3dMip &&
     results.mpr.planes === 3 && results.mpr.distinctAxes && results.mpr.hasVolume && results.mprVolume &&
+    results.uploadVolume.slices === 8 && results.uploadVolume.ordered &&
+    results.upload.railHasUpload && results.upload.activeExample === 'mpr-3d' && results.upload.planes === 3 && results.upload.distinctAxes && results.upload.hasVolume &&
     results.incremental.kept0 && results.incremental.kept1 && results.incremental.kept3 && results.incremental.cell2Replaced &&
     results.howto.mode === 'howto' && results.howto.mentionsHttp && errors.length === 0;
   console.log(JSON.stringify({ ok, results }, null, 2));

@@ -6,8 +6,9 @@
 //   1.2.840.10008.1.2.4.81 JPEG-LS Near-Lossless (decoded when NEAR=0)
 // Other compressed pixel data (JPEG baseline .50/.51, JPEG2000 .90/.91, RLE .5x)
 // still reports DECODE_FAILED — those codecs are out of scope.
-import type { BiewerDecoder, FrameSource, FramePixels, PixelType } from '../types';
+import type { BiewerDecoder, FrameSource, FramePixels, PixelType, VolumeAxis } from '../types';
 import { decodeJpegLS } from './jpegls';
+import { volumeFrameSource, type Vol, type Orient } from './nifti';
 
 function decodeErr(message: string): Error {
   const e: Error & { code?: string } = new Error(message);
@@ -21,10 +22,22 @@ export const dicomDecoder: BiewerDecoder = {
     if (bytes.length >= 132 && String.fromCharCode(bytes[128], bytes[129], bytes[130], bytes[131]) === 'DICM') return true;
     return ctx.hint === 'dicom' || /\.dcm$/i.test(ctx.filename ?? '');
   },
-  async decode(bytes) {
+  async decode(bytes, ctx) {
+    // A multi-file input (folder / zip of single-frame slices) is a SERIES →
+    // stack it into one volume (resliceable for MPR). Filter extras to real
+    // DICOM to skip folder junk.
+    const extra = (ctx.extra ?? []).filter(isLikelyDicom);
+    if (extra.length) return dicomSeriesFrameSource([bytes, ...extra], ctx.axis);
+    // a single file requested along a reslice axis → treat as a spatial volume
+    if (ctx.axis === 'coronal' || ctx.axis === 'sagittal') return dicomSeriesFrameSource([bytes], ctx.axis);
     return dicomFrameSource(bytes);
   },
 };
+
+/** cheap check: 'DICM' magic at byte 128 (used to filter folder/zip extras). */
+function isLikelyDicom(b: Uint8Array): boolean {
+  return b.length >= 132 && b[128] === 0x44 && b[129] === 0x49 && b[130] === 0x43 && b[131] === 0x4d;
+}
 
 interface Tag { group: number; elem: number; vr: string; valueOffset: number; length: number; }
 
@@ -144,6 +157,130 @@ function dicomFrameSource(bytes: Uint8Array): FrameSource {
     },
     dispose() { disposed = true; cache.clear(); },
   };
+}
+
+// --- multi-file DICOM series (folder / zip of single-frame slices) → volume ---
+
+interface Geom {
+  instance: number;
+  ipp: [number, number, number] | null; // ImagePositionPatient
+  iop: number[] | null;                  // ImageOrientationPatient (6)
+  ps: [number, number] | null;           // PixelSpacing [row, col]
+  thickness: number | null;              // SliceThickness
+}
+
+/** Read only the geometry tags needed to order/space slices. Read-only, stops
+ *  at the pixel data. Mirrors the meta-group + VR walk of dicomFrameSource. */
+function readGeom(bytes: Uint8Array): Geom {
+  const g: Geom = { instance: 0, ipp: null, iop: null, ps: null, thickness: null };
+  if (bytes.length < 132) return g;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let pos = 132;
+  let transferSyntax = '1.2.840.10008.1.2.1';
+  while (pos + 8 <= bytes.length) {
+    if (dv.getUint16(pos, true) !== 0x0002) break;
+    const t = readExplicit(dv, bytes, pos);
+    if (t.group === 0x0002 && t.elem === 0x0010) transferSyntax = trimUid(new TextDecoder().decode(bytes.subarray(t.valueOffset, t.valueOffset + t.length)));
+    pos = t.valueOffset + t.length;
+  }
+  const implicit = transferSyntax === '1.2.840.10008.1.2';
+  const le = transferSyntax !== '1.2.840.10008.1.2.2';
+  while (pos + 8 <= bytes.length) {
+    const t = implicit ? readImplicit(dv, pos, le) : readExplicit(dv, bytes, pos, le);
+    const { group, elem, valueOffset, length } = t;
+    if (group === 0x7fe0 && elem === 0x0010) break; // pixel data — done
+    const ascii = () => new TextDecoder().decode(bytes.subarray(valueOffset, valueOffset + length)).trim();
+    if (group === 0x0020 && elem === 0x0013) g.instance = parseInt(ascii(), 10) || 0;
+    else if (group === 0x0020 && elem === 0x0032) { const a = ascii().split('\\').map(Number); if (a.length >= 3) g.ipp = [a[0], a[1], a[2]]; }
+    else if (group === 0x0020 && elem === 0x0037) { const a = ascii().split('\\').map(Number); if (a.length >= 6) g.iop = a; }
+    else if (group === 0x0028 && elem === 0x0030) { const a = ascii().split('\\').map(Number); g.ps = [a[0] || 1, a[1] || 1]; }
+    else if (group === 0x0018 && elem === 0x0050) g.thickness = parseFloat(ascii()) || null;
+    if (length === 0xffffffff) { pos = skipUndefinedLength(dv, valueOffset); continue; }
+    pos = valueOffset + length;
+  }
+  return g;
+}
+
+/** voxel→world orientation from ImageOrientationPatient (row/col cosines). */
+function orientFromIOP(iop: number[] | null): Orient | undefined {
+  if (!iop || iop.length < 6) return undefined;
+  const rc = iop.slice(0, 3), cc = iop.slice(3, 6);
+  const normal = [rc[1] * cc[2] - rc[2] * cc[1], rc[2] * cc[0] - rc[0] * cc[2], rc[0] * cc[1] - rc[1] * cc[0]];
+  const dom = (v: number[]): [number, 1 | -1] => {
+    let a = 0, m = Math.abs(v[0]);
+    for (let k = 1; k < 3; k++) if (Math.abs(v[k]) > m) { m = Math.abs(v[k]); a = k; }
+    return [a, v[a] >= 0 ? 1 : -1];
+  };
+  const [wi, si] = dom(rc), [wj, sj] = dom(cc), [wk, sk] = dom(normal);
+  return { worldAxis: [wi, wj, wk], sign: [si, sj, sk] };
+}
+
+/** Stack N DICOM files (folder / zip series, or one multiframe) into one ordered
+ *  volume. Ordering: ImagePositionPatient projected on the slice normal, else
+ *  InstanceNumber, else input order. A gray volume is assembled into a contiguous
+ *  grid and resliced (axial/coronal/sagittal) via the shared volume reslicer — so
+ *  an uploaded DICOM series gets true MPR, not just axial. RGB series fall back to
+ *  an axial stack. Reuses the per-file decoder (incl. JPEG-LS) for pixels. */
+export async function dicomSeriesFrameSource(files: Uint8Array[], axis: VolumeAxis = 'native'): Promise<FrameSource> {
+  const parsed: { fs: FrameSource; geom: Geom }[] = [];
+  for (const b of files) {
+    try { parsed.push({ fs: dicomFrameSource(b), geom: readGeom(b) }); } catch { /* skip junk / unsupported slice */ }
+  }
+  if (parsed.length === 0) throw decodeErr('no decodable DICOM slice in the series');
+  if (parsed.length === 1 && parsed[0].fs.frameCount === 1 && axis === 'native') return parsed[0].fs;
+
+  const iop = parsed[0].geom.iop;
+  let normal: [number, number, number] | null = null;
+  if (iop && iop.length >= 6) {
+    const r = iop.slice(0, 3), c = iop.slice(3, 6);
+    normal = [r[1] * c[2] - r[2] * c[1], r[2] * c[0] - r[0] * c[2], r[0] * c[1] - r[1] * c[0]];
+  }
+  const proj = (g: Geom): number | null =>
+    normal && g.ipp ? g.ipp[0] * normal[0] + g.ipp[1] * normal[1] + g.ipp[2] * normal[2] : null;
+  parsed.sort((a, b) => {
+    const pa = proj(a.geom), pb = proj(b.geom);
+    if (pa != null && pb != null) return pa - pb;
+    return (a.geom.instance || 0) - (b.geom.instance || 0);
+  });
+
+  const projs = parsed.map((p) => proj(p.geom)).filter((x): x is number => x != null);
+  let zsp = parsed[0].geom.thickness || 1;
+  if (projs.length >= 2) {
+    const deltas: number[] = [];
+    for (let i = 1; i < projs.length; i++) deltas.push(Math.abs(projs[i] - projs[i - 1]));
+    deltas.sort((a, b) => a - b);
+    const med = deltas[deltas.length >> 1];
+    if (med > 0) zsp = med;
+  }
+
+  // gather every slice's pixels in sorted order (usually 1 frame per file)
+  const slices: FramePixels[] = [];
+  for (const p of parsed) for (let f = 0; f < p.fs.frameCount; f++) slices.push(await p.fs.getFrame(f));
+  parsed.forEach((p) => p.fs.dispose());
+
+  const first = slices[0];
+  const nx = first.width, ny = first.height, nz = slices.length;
+  const ps = parsed[0].geom.ps;
+  const spacing: [number, number, number] = ps ? [ps[1], ps[0], zsp] : [1, 1, zsp];
+
+  // RGB series → axial stack only (reslicer is scalar). Rare for volumes.
+  if (first.pixelType === 'rgba8') {
+    let disposed = false;
+    return {
+      frameCount: nz, frameSize: { width: nx, height: ny }, pixelType: 'rgba8',
+      meta: { format: 'dicom', spacing, dims: [nx, ny, nz] },
+      async getFrame(i) { if (disposed) throw new Error('FrameSource disposed'); return slices[Math.max(0, Math.min(nz - 1, i | 0))]; },
+      dispose() { disposed = true; },
+    };
+  }
+
+  // gray → contiguous grid [i + j*nx + k*nx*ny] and reslice for true MPR
+  const Ctor = first.data.constructor as new (n: number) => Uint8Array | Int16Array | Uint16Array | Float32Array;
+  const data = new Ctor(nx * ny * nz);
+  const plane = nx * ny;
+  for (let k = 0; k < nz; k++) (data as { set(a: ArrayLike<number>, o: number): void }).set(slices[k].data as ArrayLike<number>, k * plane);
+  const vol: Vol = { data, nx, ny, nz, spacing, pixelType: first.pixelType, orient: orientFromIOP(iop) };
+  return volumeFrameSource(vol, 'dicom', axis);
 }
 
 interface JpegLSMeta {

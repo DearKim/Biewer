@@ -35,14 +35,14 @@ export function niftiVolume(bytes: Uint8Array): VolumeData {
 type TypedCtor = Uint8ArrayConstructor | Int16ArrayConstructor | Uint16ArrayConstructor | Float32ArrayConstructor;
 
 /** Per voxel-axis dominant world mapping in RAS+ world (0=X/Right, 1=Y/Anterior, 2=Z/Superior). */
-interface Orient {
+export interface Orient {
   /** for voxel axes [i, j, k]: index of the dominant world axis */
   worldAxis: [number, number, number];
   /** for voxel axes [i, j, k]: +1 if +voxel steps toward +world, else -1 */
   sign: [number, number, number];
 }
 
-interface Vol {
+export interface Vol {
   data: Uint8Array | Int16Array | Uint16Array | Float32Array;
   nx: number; ny: number; nz: number;
   spacing: [number, number, number];
