@@ -179,6 +179,20 @@ async function volStats(page) {
   await new Promise((r) => setTimeout(r, 500));
   const vol2 = await volStats(page);
   results.volume3dMip = !!vol2 && !!vol1 && vol2.sum !== vol1.sum;
+  // free 360° tumble via REAL vertical drag: two big downward drags must BOTH
+  // change pixels — if elevation were still clamped (±85°) the 2nd would stall.
+  const vbox = await page.evaluate(() => { const c = document.querySelector('#stage biewer-volume'); const b = c.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2, h: b.height }; });
+  const dragDown = async (px) => {
+    await page.mouse.move(vbox.x, vbox.y - px / 2); await page.mouse.down();
+    for (let i = 1; i <= 6; i++) await page.mouse.move(vbox.x, vbox.y - px / 2 + (px * i) / 6);
+    await page.mouse.up(); await new Promise((r) => setTimeout(r, 250));
+  };
+  const t0 = await volStats(page);
+  await dragDown(Math.min(320, vbox.h * 0.7));
+  const t1 = await volStats(page);
+  await dragDown(Math.min(320, vbox.h * 0.7));
+  const t2 = await volStats(page);
+  results.volume3dTumble = !!t0 && !!t1 && !!t2 && t1.sum !== t0.sum && t2.sum !== t1.sum;
   await page.screenshot({ path: 'verify-volume3d.png' });
 
   // MPR + 3D multi-angle: one volume as 3 orthogonal planes (different axes →
@@ -324,7 +338,7 @@ async function volStats(page) {
     results.presetApply === 8 && results.picker.opened && results.picker.grewPast4 && results.picker.cells === 30 &&
     results.realMouse.grid === '3x3' && results.realMouse.cells === 9 &&
     results.painted && results.frameChanged && results.windowLevel && results.jpegls.ok && results.cells >= 4 && results.duplicate &&
-    results.volume3dPaint && results.volume3dRotate && results.volume3dMip &&
+    results.volume3dPaint && results.volume3dRotate && results.volume3dMip && results.volume3dTumble &&
     results.mpr.planes === 3 && results.mpr.distinctAxes && results.mpr.hasVolume && results.mprVolume &&
     results.uploadVolume.slices === 8 && results.uploadVolume.ordered &&
     results.upload.railHasUpload && results.upload.activeExample === 'mpr-3d' && results.upload.planes === 3 && results.upload.distinctAxes && results.upload.hasVolume &&

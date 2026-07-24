@@ -92,3 +92,44 @@ export function orbitEye(az: number, el: number, dist: number): Vec3 {
   const ce = Math.cos(el);
   return [dist * ce * Math.sin(az), dist * Math.sin(el), dist * ce * Math.cos(az)];
 }
+
+// --- quaternions (free-tumble camera; no gimbal lock / no elevation clamp) ---
+export type Quat = [number, number, number, number]; // x, y, z, w
+
+export function quatFromAxisAngle(ax: number, ay: number, az: number, angle: number): Quat {
+  const h = angle / 2, s = Math.sin(h);
+  return [ax * s, ay * s, az * s, Math.cos(h)];
+}
+
+export function quatMul(a: Quat, b: Quat): Quat {
+  const [ax, ay, az, aw] = a, [bx, by, bz, bw] = b;
+  return [
+    aw * bx + ax * bw + ay * bz - az * by,
+    aw * by - ax * bz + ay * bw + az * bx,
+    aw * bz + ax * by - ay * bx + az * bw,
+    aw * bw - ax * bx - ay * by - az * bz,
+  ];
+}
+
+export function quatNormalize(q: Quat): Quat {
+  const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+  return [q[0] / l, q[1] / l, q[2] / l, q[3] / l];
+}
+
+/** Rotate a vec3 by a quaternion (v' = v + 2w(q×v) + 2 q×(q×v)). */
+export function rotateVec3ByQuat(v: Vec3, q: Quat): Vec3 {
+  const [qx, qy, qz, qw] = q, [vx, vy, vz] = v;
+  const tx = 2 * (qy * vz - qz * vy);
+  const ty = 2 * (qz * vx - qx * vz);
+  const tz = 2 * (qx * vy - qy * vx);
+  return [
+    vx + qw * tx + (qy * tz - qz * ty),
+    vy + qw * ty + (qz * tx - qx * tz),
+    vz + qw * tz + (qx * ty - qy * tx),
+  ];
+}
+
+/** A pleasant absolute orientation from azimuth/elevation (radians). */
+export function quatFromAzEl(az: number, el: number): Quat {
+  return quatNormalize(quatMul(quatFromAxisAngle(0, 1, 0, az), quatFromAxisAngle(1, 0, 0, -el)));
+}

@@ -10,13 +10,13 @@
 // No external deps, no framework. Renderer owns GL resources; camera + input
 // live in volumeView. WebGL2 is required (sampler3D / texImage3D).
 import type { VolumeData } from '../types';
-import { type Vec3, identity, perspective, lookAt, multiply, invert, orbitEye } from './mat4';
+import { type Vec3, type Quat, identity, perspective, lookAt, multiply, invert, rotateVec3ByQuat } from './mat4';
 
 export type VolumeRenderMode = 'dvr' | 'mip';
 
 export interface VolumeCamera {
-  azimuth: number;   // radians
-  elevation: number; // radians (clamped to ±85°)
+  /** free orientation quaternion (no gimbal lock → full 360° tumble) */
+  q: Quat;
   distance: number;  // in normalized units (box longest edge = 1)
 }
 
@@ -217,8 +217,11 @@ export function createVolumeRenderer(canvas: HTMLCanvasElement, volume: VolumeDa
 
   function render(cam: VolumeCamera) {
     const g = gl!;
-    const eye = orbitEye(cam.azimuth, cam.elevation, cam.distance);
-    lookAt(view, eye, [0, 0, 0], [0, 1, 0]);
+    // camera orbits a fixed axis-aligned box; the quaternion tumbles the eye AND
+    // its up-vector together, so eye⊥up always holds → no gimbal lock, full 360°.
+    const eye = rotateVec3ByQuat([0, 0, cam.distance], cam.q);
+    const up = rotateVec3ByQuat([0, 1, 0], cam.q);
+    lookAt(view, eye, [0, 0, 0], up);
     perspective(proj, (45 * Math.PI) / 180, vw / vh, 0.01, 100);
     multiply(vp, proj, view);
     if (!invert(invVP, vp)) return;

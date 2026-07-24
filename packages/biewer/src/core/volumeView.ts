@@ -8,6 +8,7 @@
 import type { BiewerSource, BiewerError, BiewerProgress, VolumeData } from './types';
 import { createVolume } from './volume';
 import { createVolumeRenderer, type VolumeRenderer, type VolumeRenderMode, type VolumeCamera } from './render/volume3d';
+import { type Quat, quatMul, quatNormalize, quatFromAxisAngle, quatFromAzEl } from './render/mat4';
 
 export interface BiewerVolumeViewOptions {
   /** decode a volume from a source (nii/dcm/.nii.gz) … */
@@ -18,8 +19,8 @@ export interface BiewerVolumeViewOptions {
   window?: { lo: number; hi: number };
   opacity?: number;
   invert?: boolean;
-  /** initial camera (azimuth/elevation radians, distance in box units) */
-  camera?: Partial<VolumeCamera>;
+  /** initial camera: azimuth/elevation (radians) or an explicit quaternion, + distance */
+  camera?: CameraInit;
   /** cap the longest volume edge in voxels (perf). Default 192. */
   maxEdge?: number;
   onReady?: (v: VolumeData) => void;
@@ -28,12 +29,21 @@ export interface BiewerVolumeViewOptions {
   onCameraChange?: (c: VolumeCamera) => void;
 }
 
+/** Camera input: absolute azimuth/elevation (radians), an explicit quaternion,
+ *  and/or distance. Interactive drag tumbles freely from whatever is set. */
+export interface CameraInit {
+  azimuth?: number;
+  elevation?: number;
+  distance?: number;
+  q?: Quat;
+}
+
 export interface BiewerVolumeView {
   setMode(m: VolumeRenderMode): void;
   setWindow(lo: number, hi: number): void;
   setOpacity(o: number): void;
   setInvert(b: boolean): void;
-  setCamera(patch: Partial<VolumeCamera>): void;
+  setCamera(patch: CameraInit): void;
   getCamera(): VolumeCamera;
   getVolume(): VolumeData | null;
   resize(): void;
@@ -42,7 +52,7 @@ export interface BiewerVolumeView {
 }
 
 const MIN_DIST = 0.6, MAX_DIST = 6;
-const MAX_EL = (85 * Math.PI) / 180;
+const ROT_SPEED = 0.01; // radians per pixel dragged
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
 export function createBiewerVolumeView(el: HTMLElement, options: BiewerVolumeViewOptions): BiewerVolumeView {
@@ -51,9 +61,8 @@ export function createBiewerVolumeView(el: HTMLElement, options: BiewerVolumeVie
   let volume: VolumeData | null = null;
 
   const camera: VolumeCamera = {
-    azimuth: options.camera?.azimuth ?? 0.6,
-    elevation: options.camera?.elevation ?? 0.35,
-    distance: options.camera?.distance ?? 2.4,
+    q: options.camera?.q ?? quatFromAzEl(options.camera?.azimuth ?? 0.6, options.camera?.elevation ?? 0.35),
+    distance: clamp(options.camera?.distance ?? 2.4, MIN_DIST, MAX_DIST),
   };
 
   // --- DOM ------------------------------------------------------------------
@@ -107,8 +116,10 @@ export function createBiewerVolumeView(el: HTMLElement, options: BiewerVolumeVie
     if (!dragging) return;
     const dx = e.clientX - lastX, dy = e.clientY - lastY;
     lastX = e.clientX; lastY = e.clientY;
-    camera.azimuth += dx * 0.01;
-    camera.elevation = clamp(camera.elevation - dy * 0.01, -MAX_EL, MAX_EL);
+    // free trackball: yaw about world-Y, pitch about world-X, pre-multiplied so
+    // the volume tumbles a full 360° in every direction (no elevation clamp).
+    const dq = quatMul(quatFromAxisAngle(0, 1, 0, dx * ROT_SPEED), quatFromAxisAngle(1, 0, 0, dy * ROT_SPEED));
+    camera.q = quatNormalize(quatMul(dq, camera.q));
     schedule();
   });
   const endDrag = (e: PointerEvent) => {
@@ -171,12 +182,12 @@ export function createBiewerVolumeView(el: HTMLElement, options: BiewerVolumeVie
     setOpacity(o) { renderer?.setState({ opacity: o }); schedule(); },
     setInvert(b) { renderer?.setState({ invert: b }); schedule(); },
     setCamera(patch) {
-      if (patch.azimuth != null) camera.azimuth = patch.azimuth;
-      if (patch.elevation != null) camera.elevation = clamp(patch.elevation, -MAX_EL, MAX_EL);
+      if (patch.q) camera.q = quatNormalize(patch.q);
+      else if (patch.azimuth != null || patch.elevation != null) camera.q = quatFromAzEl(patch.azimuth ?? 0.6, patch.elevation ?? 0.35);
       if (patch.distance != null) camera.distance = clamp(patch.distance, MIN_DIST, MAX_DIST);
       schedule();
     },
-    getCamera: () => ({ ...camera }),
+    getCamera: () => ({ q: [...camera.q] as Quat, distance: camera.distance }),
     getVolume: () => volume,
     resize: doResize,
     async capture() {

@@ -41,7 +41,8 @@ This package follows [Semantic Versioning](https://semver.org/).
   **한 번** 디코드해 gray FrameSource 를 스칼라 그리드(`VolumeData`: dims·spacing·min/max)로 스택(최장변 ≤192 로 스트라이드 다운샘플).
   `core/render/volume3d.ts` 가 이를 R8 3D 텍스처로 올리고 전체화면 쿼드 + inverse-view-projection 레이로
   물리 AABB 를 교차·마칭·합성(`mat4.ts` 자체 카메라 수학). 두 모드: **DVR**(front-to-back 합성) / **MIP**(최대강도투영).
-  `core/volumeView.ts` `createBiewerVolumeView(el,{source|volume,mode})` 가 캔버스+렌더러+입력(드래그=오빗, 휠=줌, rAF 병합)+리사이즈를 조립.
+  `core/volumeView.ts` `createBiewerVolumeView(el,{source|volume,mode})` 가 캔버스+렌더러+입력(드래그=자유 회전, 휠=줌, rAF 병합)+리사이즈를 조립.
+  카메라는 **쿼터니언 트랙볼**(짐벌락 없음, 고도각 제한 없음 → 모든 방향 360° 텀블). `VolumeCamera = { q, distance }`; `setCamera` 는 `q` 또는 azimuth/elevation(자동 변환)/distance 를 받음.
   어댑터: Web Component `<biewer-volume>`(mode/invert/opacity attribute, `bw-ready`/`bw-error`/`bw-camera` 이벤트, `setMode`/`resetCamera` 등 imperative), React `<BiewerVolume>`.
   헤드리스(ANGLE/SwiftShader WebGL2)에서 실제 CT 볼륨(NiiVue `CT_Abdo.nii.gz`) 디코드→3D 렌더 확인: 비어있지 않은 페인트 · 카메라 오빗 시 픽셀 변화 · DVR⇄MIP 재렌더 검증. per-instance(전역 없음), opt-in.
   (오블리크/컷플레인·transfer-function 에디터·3D 측정·서피스 메시는 후속.)
