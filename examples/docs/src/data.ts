@@ -23,25 +23,33 @@ export interface Series {
   title: string;
   modality: string;
   fmt: FmtLabel;
-  hueBase: number;            // thumbnail tint
+  hueBase: number;            // thumbnail tint (placeholder fallback)
   study: StudyKind;
   date: string;
   rail: boolean;              // shown in the right "series" rail
   source: BiewerSource;       // real, fetchable
-  thumb?: string;
+  thumbUrl?: string;          // pre-generated real first-frame thumbnail
+  thumb?: string;             // resolved thumbnail (data URL or thumbUrl)
 }
 
+const thumb = (id: string) => `/samples/thumb-${id}.png`;
+
+// Diverse medical rail: MR / CT / ultrasound / X-ray / endoscopy, across
+// NIfTI / DICOM / video / PNG / ZIP / JPEG-LS. Real thumbnails are pre-generated.
 export const SERIES: Series[] = [
-  // current study (rail)
-  { id: 's1', title: 'Brain MR (MNI152)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 190, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${NIIVUE}/mni152.nii.gz` } },
-  { id: 's2', title: 'MR — multiframe', modality: 'MR · DICOM', fmt: 'DICOM', hueBase: 30, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${PYDATA}/emri_small.dcm` } },
-  { id: 's3', title: 'Endoscopy cine', modality: 'Video · webm', fmt: 'MP4', hueBase: 320, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: MED_VIDEO } },
-  { id: 's4', title: 'Perfusion (pCASL)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 100, study: 'current', date: '2026-07-21', rail: true, source: { kind: 'url', url: `${NIIVUE}/pcasl.nii.gz` } },
-  // prior study (rail, follow-up)
-  { id: 'p1', title: 'Brain MR (T1)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 205, study: 'prior', date: '2026-01-12', rail: true, source: { kind: 'url', url: `${NIIVUE}/chris_t1.nii.gz` } },
-  { id: 'p2', title: 'CT (small)', modality: 'CT · DICOM', fmt: 'DICOM', hueBase: 45, study: 'prior', date: '2026-01-12', rail: true, source: { kind: 'url', url: `${PYDICOM}/CT_small.dcm` } },
-  // format-demo sources (not in the rail)
-  { id: 'img', title: 'Brain MR — PNG slices', modality: 'MR · PNG', fmt: 'PNG', hueBase: 200, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: IMG_STACK } },
+  // --- current study (rail) ---
+  { id: 's1', title: 'Brain MR (MNI152)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 190, study: 'current', date: '2026-07-21', rail: true, thumbUrl: thumb('s1'), source: { kind: 'url', url: `${NIIVUE}/mni152.nii.gz` } },
+  { id: 'ct1', title: 'Abdomen CT', modality: 'CT · NIfTI', fmt: 'NIfTI', hueBase: 40, study: 'current', date: '2026-07-21', rail: true, thumbUrl: thumb('ct1'), source: { kind: 'url', url: `${NIIVUE}/CT_Abdo.nii.gz` } },
+  { id: 's2', title: 'MR — multiframe', modality: 'MR · DICOM', fmt: 'DICOM', hueBase: 30, study: 'current', date: '2026-07-21', rail: true, thumbUrl: thumb('s2'), source: { kind: 'url', url: `${PYDATA}/emri_small.dcm` } },
+  { id: 'us1', title: 'Ultrasound', modality: 'US · DICOM', fmt: 'DICOM', hueBase: 280, study: 'current', date: '2026-07-21', rail: true, thumbUrl: thumb('us1'), source: { kind: 'url', url: `${PYDATA}/US1_UNCR.dcm` } },
+  { id: 's3', title: 'Endoscopy cine', modality: 'Video · webm', fmt: 'MP4', hueBase: 320, study: 'current', date: '2026-07-21', rail: true, thumbUrl: thumb('s3'), source: { kind: 'url', url: MED_VIDEO } },
+  { id: 'img', title: 'Brain MR — PNG slices', modality: 'MR · PNG', fmt: 'PNG', hueBase: 200, study: 'current', date: '2026-07-21', rail: true, thumbUrl: thumb('img'), source: { kind: 'url', url: IMG_STACK } },
+  // --- prior study (rail, follow-up) ---
+  { id: 'p1', title: 'Brain MR (T1)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 205, study: 'prior', date: '2026-01-12', rail: true, thumbUrl: thumb('p1'), source: { kind: 'url', url: `${NIIVUE}/chris_t1.nii.gz` } },
+  { id: 'p2', title: 'Head CT', modality: 'CT · DICOM', fmt: 'DICOM', hueBase: 45, study: 'prior', date: '2026-01-12', rail: true, thumbUrl: thumb('p2'), source: { kind: 'url', url: `${PYDICOM}/CT_small.dcm` } },
+  { id: 'xr1', title: 'X-ray', modality: 'XR · DICOM', fmt: 'DICOM', hueBase: 210, study: 'prior', date: '2026-01-12', rail: true, thumbUrl: thumb('xr1'), source: { kind: 'url', url: `${PYDATA}/RG1_UNCR.dcm` } },
+  // --- format-demo sources (not in the rail; referenced by Basics examples) ---
+  { id: 's4', title: 'Perfusion (pCASL)', modality: 'MR · NIfTI', fmt: 'NIfTI', hueBase: 100, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: `${NIIVUE}/pcasl.nii.gz` } },
   { id: 'zip', title: 'Brain MR — PNG archive', modality: 'MR · ZIP', fmt: 'ZIP', hueBase: 210, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: '/samples/stack.zip' } },
   { id: 'jls', title: 'MR — JPEG-LS', modality: 'MR · DICOM/JPEG-LS', fmt: 'DICOM', hueBase: 15, study: 'current', date: '2026-07-21', rail: false, source: { kind: 'url', url: `${PYDATA}/emri_small_jpeg_ls_lossless.dcm` } },
 ];
@@ -49,9 +57,12 @@ export const SERIES: Series[] = [
 export const CURRENT_SERIES = SERIES.filter((s) => s.study === 'current' && s.rail);
 export const PRIOR_SERIES = SERIES.filter((s) => s.study === 'prior' && s.rail);
 
-/** Cheap tinted placeholder thumbnail (no network/decoding for the rail). */
+/** Resolve a rail thumbnail: use the pre-generated real first-frame PNG if we
+ *  have one, otherwise draw a cheap tinted placeholder (no network/decoding). */
 export async function makeThumb(s: Series, size = 200): Promise<void> {
-  if (s.thumb || typeof document === 'undefined') return;
+  if (s.thumb) return;
+  if (s.thumbUrl) { s.thumb = s.thumbUrl; return; }
+  if (typeof document === 'undefined') return;
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const ctx = c.getContext('2d')!;
