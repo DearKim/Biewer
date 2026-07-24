@@ -17,6 +17,24 @@ async function firstCanvasStats(page) {
 const cellCanvases = (page) => page.evaluate(() => document.querySelectorAll('.stage biewer-view canvas').length);
 const cellDivs = (page) => page.evaluate(() => document.querySelectorAll('.stage .cell').length);
 
+// WebGL 3D canvas: draw onto a 2D canvas to read pixels (preserveDrawingBuffer:true).
+async function volStats(page) {
+  return page.evaluate(() => {
+    const c = document.querySelector('#stage biewer-volume canvas');
+    if (!c || !c.width) return null;
+    const tmp = document.createElement('canvas'); tmp.width = c.width; tmp.height = c.height;
+    const ctx = tmp.getContext('2d'); ctx.drawImage(c, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let bright = 0, sum = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = d[i] + d[i + 1] + d[i + 2];
+      if (lum > 60) bright++;               // above the ~38 dark background
+      sum = (sum + lum) % 2147483647;
+    }
+    return { bright, sum, w: c.width, h: c.height };
+  });
+}
+
 (async () => {
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader'] });
   const page = await browser.newPage();
@@ -137,6 +155,55 @@ const cellDivs = (page) => page.evaluate(() => document.querySelectorAll('.stage
     }, 300);
   }), 25000);
 
+  // 3D volume rendering (WebGL raycaster): a real CT volume decodes + paints,
+  // orbiting the camera changes pixels, and DVR→MIP re-renders differently.
+  await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('Volume rendering')); it && it.click(); });
+  await page.waitForFunction(() => {
+    const c = document.querySelector('#stage biewer-volume canvas');
+    if (!c || !c.width) return false;
+    const tmp = document.createElement('canvas'); tmp.width = c.width; tmp.height = c.height;
+    tmp.getContext('2d').drawImage(c, 0, 0);
+    const d = tmp.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let bright = 0; for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 60) bright++;
+    return bright > 300;
+  }, { timeout: 40000 });
+  const vol0 = await volStats(page);
+  results.volume3dPaint = !!vol0 && vol0.bright > 300;
+  // orbit the camera → pixels must change
+  await page.evaluate(() => { const el = document.querySelector('#stage biewer-volume'); el.getView().setCamera({ azimuth: 2.3, elevation: 0.7 }); });
+  await new Promise((r) => setTimeout(r, 500));
+  const vol1 = await volStats(page);
+  results.volume3dRotate = !!vol1 && !!vol0 && vol1.sum !== vol0.sum;
+  // DVR → MIP via the 3D toolbar → re-render differs
+  await page.evaluate(() => { const b = [...document.querySelectorAll('#toolbar .tbtn')].find((x) => x.textContent.trim() === 'MIP'); b && b.click(); });
+  await new Promise((r) => setTimeout(r, 500));
+  const vol2 = await volStats(page);
+  results.volume3dMip = !!vol2 && !!vol1 && vol2.sum !== vol1.sum;
+  await page.screenshot({ path: 'verify-volume3d.png' });
+
+  // MPR + 3D multi-angle: one volume as 3 orthogonal planes (different axes →
+  // different pixels) + 1 interactive 3D volume, all painted in a 2×2 grid.
+  await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('MPR + 3D')); it && it.click(); });
+  await page.waitForFunction(() => {
+    const planes = [...document.querySelectorAll('#stage biewer-view canvas')];
+    if (planes.length !== 3 || !document.querySelector('#stage biewer-volume canvas')) return false;
+    return planes.every((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let nz = 0; for (let i = 0; i < d.length; i += 4) if (d[i]) nz++; return nz > 500; });
+  }, { timeout: 40000 });
+  results.mpr = await page.evaluate(() => {
+    const planes = [...document.querySelectorAll('#stage biewer-view canvas')];
+    const sums = planes.map((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let s = 0; for (let i = 0; i < d.length; i += 4) s = (s + d[i]) % 2147483647; return s; });
+    return {
+      planes: planes.length,
+      distinctAxes: new Set(sums).size === sums.length, // axial/coronal/sagittal differ
+      hasVolume: !!document.querySelector('#stage biewer-volume canvas'),
+      labels: [...document.querySelectorAll('#stage .cell .badge')].map((b) => b.textContent.replace('×', '').split(' · ')[0]).join(','),
+    };
+  });
+  // the 3D cell in the MPR layout also paints (WebGL)
+  const mprVol = await volStats(page);
+  results.mprVolume = !!mprVol && mprVol.bright > 300;
+  await page.screenshot({ path: 'verify-mpr-3d.png' });
+
   // Layout example: 2×2 grid actually mounts 4 viewports (DOM canvas count)
   await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('Grid layout')); it && it.click(); });
   await page.waitForFunction(() => document.querySelectorAll('.stage biewer-view canvas').length >= 4, { timeout: 20000 });
@@ -198,6 +265,8 @@ const cellDivs = (page) => page.evaluate(() => document.querySelectorAll('.stage
     results.presetApply === 8 && results.picker.opened && results.picker.grewPast4 && results.picker.cells === 30 &&
     results.realMouse.grid === '3x3' && results.realMouse.cells === 9 &&
     results.painted && results.frameChanged && results.windowLevel && results.jpegls.ok && results.cells >= 4 && results.duplicate &&
+    results.volume3dPaint && results.volume3dRotate && results.volume3dMip &&
+    results.mpr.planes === 3 && results.mpr.distinctAxes && results.mpr.hasVolume && results.mprVolume &&
     results.incremental.kept0 && results.incremental.kept1 && results.incremental.kept3 && results.incremental.cell2Replaced &&
     results.howto.mode === 'howto' && results.howto.mentionsHttp && errors.length === 0;
   console.log(JSON.stringify({ ok, results }, null, 2));

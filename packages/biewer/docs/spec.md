@@ -109,7 +109,8 @@ Biewer 는 **단순 View 출력만** 제공한다. 상세: [`prd/prd-view-layout
 | 레이아웃 엔진, viewType 프리셋 | P3. host 가 CSS 로 구성 |
 | 툴바/컨트롤 UI 컴포넌트 | P4. headless 컨트롤러만 제공 |
 | 인증, 백엔드 엔드포인트 계약 | host 소유. [`source-contract.md`](source-contract.md) 의 주입 계약만 정의 |
-| 3-plane 동시 MPR 뷰·crosshair 연동, VR(볼륨 렌더) | 후속 검토. v0 은 단일 축 슬라이스 뷰(3축 중 선택, D6)까지 |
+| 3-plane 동시 MPR 뷰·crosshair 연동 | 후속 검토. v0 은 단일 축 슬라이스 뷰(3축 중 선택, D6) + 3D VR(아래) |
+| ~~VR(볼륨 렌더)~~ → **In-Scope (구현됨)** | WebGL2 레이캐스터(DVR/MIP)로 구현. `createBiewerVolumeView` / `<biewer-volume>` / `<BiewerVolume>`. VTK.js 무의존. transfer-function 에디터·컷플레인·3D 측정은 후속 |
 | 비직교(oblique) reslice | 후속 |
 | SEG/AI 결과 오버레이, 각도/화살표/텍스트 주석 | 후속. overlay slot 으로 host 가 우선 대응 (측정 세트는 In-Scope — D9) |
 

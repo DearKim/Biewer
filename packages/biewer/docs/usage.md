@@ -94,6 +94,54 @@ Imperative handle (`ref`): `getFrame()`, `setFrame(i)`, `resize()`, `capture(): 
 
 ---
 
+## 3D 볼륨 렌더링
+
+의료 볼륨(nii/dcm/`.nii.gz`)을 WebGL2 레이캐스터로 **3D**로 렌더한다 — VTK.js 무의존, 프레임워크 무관.
+DVR(입체 합성) / MIP(최대강도투영), 드래그=오빗·휠=줌. 2D 뷰(FrameSource)와 별개의 진입점이다.
+상세: [reference/skills/skill-22-volume-3d.md](reference/skills/skill-22-volume-3d.md).
+
+```typescript
+// 코어 (vanilla TS)
+import { createVolume, createBiewerVolumeView } from '@deepnoid/biewer';
+
+const view = createBiewerVolumeView(el, {
+  source: { kind: 'url', url: '/studies/case.nii.gz' },
+  mode: 'dvr',                          // 'dvr' | 'mip'
+  onReady: (v) => console.log(v.dims, v.spacing),
+});
+view.setMode('mip');                    // DVR ⇄ MIP
+view.setInvert(true);
+view.setCamera({ azimuth: 0.6, elevation: 0.35, distance: 2.4 }); // reset view
+
+// 볼륨을 미리/공유로 디코드하고 싶으면:
+const vol = await createVolume({ kind: 'url', url: '/studies/case.nii.gz' });
+createBiewerVolumeView(el2, { volume: vol, mode: 'mip' });
+```
+
+```html
+<!-- Web Component -->
+<biewer-volume mode="dvr"></biewer-volume>
+<script type="module">
+  import '@deepnoid/biewer/wc';          // <biewer-volume> 등록
+  const el = document.querySelector('biewer-volume');
+  el.source = { kind: 'url', url: '/studies/case.nii.gz' };
+  el.addEventListener('bw-ready', (e) => console.log(e.detail.dims));
+  el.setMode('mip'); el.resetCamera();   // imperative
+</script>
+```
+
+```tsx
+// React
+import { BiewerVolume } from '@deepnoid/biewer/react';
+<BiewerVolume source={{ kind: 'url', url: '/studies/case.nii.gz' }} mode={mode} onReady={(v) => …} />
+```
+
+`createBiewerVolumeView(el, opts)` 핸들: `setMode('dvr'|'mip')` · `setWindow(lo,hi)` · `setOpacity(o)` ·
+`setInvert(b)` · `setCamera({azimuth,elevation,distance})` · `getCamera()` · `getVolume()` · `resize()` ·
+`capture(): Promise<Blob>` · `dispose()`. WebGL2 미지원 환경은 `onError`(`DECODE_FAILED`)로 명확히 실패한다.
+
+---
+
 ## Hooks
 
 ### `useBiewerTools(options?) → ToolController`
@@ -168,7 +216,9 @@ registerDecoder(myTiffDecoder);
 
 | Subpath | 내용 |
 |---|---|
-| `@deepnoid/biewer` | `BiewerView`, hooks, 전역 주입 함수, 타입 |
+| `@deepnoid/biewer` | `createBiewerView`, `createVolume`, `createBiewerVolumeView`, 컨트롤러, 전역 주입 함수, 타입 |
+| `@deepnoid/biewer/react` | `<BiewerView>`, `<BiewerVolume>`, `useBiewerTools`, `useBiewerPlayback` |
+| `@deepnoid/biewer/wc` | `<biewer-view>`, `<biewer-volume>` 등록 |
 | `@deepnoid/biewer/style.css` | 컴파일된 스타일 (`bw-` prefix) |
 | `@deepnoid/biewer/workers/decodeWorker.js` | 디코딩 워커 — `?url` 로 사용 |
 

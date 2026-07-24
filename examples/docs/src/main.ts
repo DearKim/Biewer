@@ -2,26 +2,31 @@ import './styles.css';
 import '@deepnoid/biewer/wc';
 import { createToolController, createPlaybackController } from '@deepnoid/biewer';
 import type { ToolController, PlaybackController, BiewerTool } from '@deepnoid/biewer';
-import type { BiewerViewElement } from '@deepnoid/biewer/wc';
+import type { BiewerViewElement, BiewerVolumeElement } from '@deepnoid/biewer/wc';
 import {
   SERIES, CURRENT_SERIES, PRIOR_SERIES, EXAMPLES, EXAMPLE_CATEGORIES, HOW_TO, PROP_INFO, GRID_MAX, GRID_PRESETS,
-  codeFor, propsFor, askFor, realizeSeries, makeThumb, type Series, type Example,
+  codeFor, propsFor, askFor, realizeSeries, makeThumb, type Series, type Example, type CellView,
 } from './data';
 
 // ---------------------------------------------------------------------------
 const tools: ToolController = createToolController({ scope: 'all' });
 const playback: PlaybackController = createPlaybackController({ mode: 'slice', speed: 12 });
 
+const DEFAULT_CELL: CellView = { kind: '2d' };
 const state = {
   grid: { rows: 1, cols: 2 },
   selected: ['s1', 'p1'] as (string | null)[],
+  cellViews: [{ ...DEFAULT_CELL }, { ...DEFAULT_CELL }] as CellView[], // per-viewport config (axis / 3D)
   activeExample: 'follow-up',
   commentsMode: 'example' as 'example' | 'howto',
   howtoId: 'install',
   tab: 'props' as 'props' | 'languages' | 'skills',
   lang: 'core' as 'core' | 'react' | 'wc',
+  vol: { mode: 'dvr' as 'dvr' | 'mip', invert: false }, // 3D controls (host state)
 };
 const cellCount = () => state.grid.rows * state.grid.cols;
+const activeExampleObj = (): Example | undefined => EXAMPLES.find((e) => e.id === state.activeExample);
+const is3dActive = (): boolean => activeExampleObj()?.kind === '3d';
 let nudgedMiddle = false; // whether we've jumped a freshly-loaded volume to its middle slice
 
 /** Volumes/cine open on the MIDDLE frame (frame 0 is often an empty edge slice).
@@ -47,8 +52,12 @@ const seriesById = (id: string): Series => SERIES.find((s) => s.id === id)!;
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+function fitCellViews(n: number): void {
+  state.cellViews = Array.from({ length: n }, (_, i) => state.cellViews[i] ?? { ...DEFAULT_CELL });
+}
 function fitSelection(n: number): void {
   state.selected = Array.from({ length: n }, (_, i) => state.selected[i] ?? null);
+  fitCellViews(n);
 }
 /** grow/shrink the selection, filling NEW cells from a cycling series pool so a
  *  resized grid looks populated (used by the Grid control on the layout example). */
@@ -56,6 +65,7 @@ function fitSelectionFilled(n: number): void {
   const pool = state.selected.filter((x): x is string => !!x);
   const base = pool.length ? pool : SERIES.map((s) => s.id);
   state.selected = Array.from({ length: n }, (_, i) => state.selected[i] ?? base[i % base.length]);
+  fitCellViews(n);
 }
 function copyButton(getText: () => string): HTMLButtonElement {
   const b = el('button', 'copy-btn', 'Copy') as HTMLButtonElement;
@@ -208,11 +218,17 @@ function applyExample(ex: Example): void {
   nudgedMiddle = false;
   state.grid = { rows: ex.rows, cols: ex.cols };
   state.selected = Array.from({ length: ex.rows * ex.cols }, (_, i) => ex.series[i] ?? null);
+  // per-viewport config: from ex.views if given (MPR + 3D), else whole-example kind
+  const wholeKind: '2d' | '3d' = ex.kind === '3d' ? '3d' : '2d';
+  state.cellViews = Array.from({ length: ex.rows * ex.cols }, (_, i) =>
+    ex.views?.[i] ?? { kind: wholeKind, volMode: ex.volMode });
   if (ex.tool !== undefined) tools.setActiveTool(ex.tool);
   if (ex.mode) playback.setMode(ex.mode);
+  if (ex.kind === '3d') { state.vol.mode = ex.volMode ?? 'dvr'; state.vol.invert = false; }
   renderLeft();
   renderRight();
   renderToolbar();
+  renderPlayback(); // 3D swaps the frame transport for a camera hint
   renderComments();
   void rebuildStage().then(maybeNudgeMiddle); // kept views already know their frameCount
 }
@@ -406,6 +422,9 @@ function renderToolbar(): void {
   g.appendChild(el('span', 'hint-inline', 'host CSS grid — not a plugin tool'));
   root.appendChild(g);
   root.appendChild(el('div', 'sep'));
+
+  if (is3dActive()) { root.appendChild(vol3dControls()); return; }
+
   const toolGrp = el('div', 'grp');
   toolGrp.appendChild(el('span', 'lbl', 'Tools'));
   for (const spec of TOOL_BTNS) {
@@ -420,6 +439,34 @@ function renderToolbar(): void {
     toolGrp.appendChild(b);
   }
   root.appendChild(toolGrp);
+}
+
+/** Apply the current 3D state to every mounted <biewer-volume>. */
+function eachVolume(fn: (v: BiewerVolumeElement) => void): void {
+  document.querySelectorAll('#stage biewer-volume').forEach((v) => fn(v as BiewerVolumeElement));
+}
+/** 3D toolbar — mode (DVR/MIP), invert, reset camera. Drives the volume views
+ *  directly, mirroring how a host wires its own 3D controls. */
+function vol3dControls(): HTMLElement {
+  const grp = el('div', 'grp');
+  grp.appendChild(el('span', 'lbl', '3D'));
+  const modeBtn = (m: 'dvr' | 'mip', label: string) => {
+    const b = el('button', 'tbtn' + (state.vol.mode === m ? ' active' : ''), label) as HTMLButtonElement;
+    b.dataset.tool = m;
+    b.onclick = () => { state.vol.mode = m; eachVolume((v) => v.setMode(m)); renderToolbar(); };
+    return b;
+  };
+  grp.appendChild(modeBtn('dvr', 'DVR'));
+  grp.appendChild(modeBtn('mip', 'MIP'));
+  const inv = el('button', 'tbtn' + (state.vol.invert ? ' active' : ''), 'Invert') as HTMLButtonElement;
+  inv.dataset.tool = 'invert';
+  inv.onclick = () => { state.vol.invert = !state.vol.invert; eachVolume((v) => v.setInvert(state.vol.invert)); renderToolbar(); };
+  grp.appendChild(inv);
+  const reset = el('button', 'tbtn', 'Reset view') as HTMLButtonElement;
+  reset.onclick = () => eachVolume((v) => v.resetCamera());
+  grp.appendChild(reset);
+  grp.appendChild(el('span', 'hint-inline', 'drag = orbit · wheel = zoom'));
+  return grp;
 }
 
 // ---- stage (reconciled — only changed cells rebuild, others keep their live view) ----
@@ -443,37 +490,74 @@ async function rebuildStage(): Promise<void> {
   renderMeta();
 }
 
-/** Update one viewport cell in place. Keeps the live <biewer-view> (no dispose,
- *  no re-decode) when the series id is unchanged. */
+/** Update one viewport cell in place. Keeps the live view (no dispose, no
+ *  re-decode) when nothing about the cell changed. Each cell's config (2D+axis
+ *  or 3D) comes from state.cellViews[i] — that's how one example (MPR + 3D) can
+ *  show the same volume from several angles at once. */
 function renderCell(cell: HTMLElement, i: number): void {
   const id = state.selected[i] ?? '';
-  const cur = cell.dataset.seriesId; // undefined = never rendered ('' = rendered empty)
-  if (cur !== undefined && cur === id) return; // unchanged → leave the live view alone
+  const cv = state.cellViews[i] ?? DEFAULT_CELL;
+  const kind = cv.kind;
+  const axis = cv.axis && cv.axis !== 'native' ? cv.axis : '';
+  const volMode = cv.volMode ?? state.vol.mode;
+  // planes with an explicit axis scroll independently (MPR); default 2D cells
+  // share the one PlaybackController (frame-sync compare/output examples).
+  const independent = kind === '2d' && !!axis;
+  const viewKey = `${kind}|${axis}|${kind === '3d' ? volMode : ''}|${id}`;
+  if (cell.dataset.viewKey !== undefined && cell.dataset.viewKey === viewKey) return; // unchanged → leave the live view alone
+  cell.dataset.viewKey = viewKey;
   cell.dataset.seriesId = id;
-  cell.innerHTML = ''; // removing the old <biewer-view> disconnects it → core dispose()
+  cell.dataset.kind = kind;
+  cell.innerHTML = ''; // removing the old <biewer-view>/<biewer-volume> disconnects it → core dispose()
   cell.classList.toggle('empty', !id);
   if (!id) {
     cell.appendChild(el('span', 'empty-hint', 'Drop a series here →'));
     return;
   }
   const s = seriesById(id);
-  const badge = el('span', 'badge', `${s.title} · ${s.study === 'prior' ? 'prior' : s.date}`);
+  const label = cv.label ? `${cv.label} · ` : '';
+  const badge = el('span', 'badge', `${label}${s.title}`);
   const x = el('button', 'badge-x', '×') as HTMLButtonElement;
   x.title = 'Remove from this viewport';
   x.onclick = (ev) => { ev.stopPropagation(); clearCell(i); };
   badge.appendChild(x);
   cell.appendChild(badge);
+
+  if (kind === '3d') {
+    const vol = document.createElement('biewer-volume') as BiewerVolumeElement;
+    vol.setAttribute('mode', volMode);
+    if (state.vol.invert) vol.setAttribute('invert', '');
+    cell.appendChild(vol);
+    void realizeSeries(s).then((rs) => {
+      if (cell.dataset.viewKey !== viewKey) return;
+      vol.source = rs.source!;
+      renderRight();
+    });
+    return;
+  }
+
   const view = document.createElement('biewer-view') as BiewerViewElement;
   view.tools = tools;
-  view.playback = playback;
-  // a freshly-decoded source reports frameCount here → jump volumes to mid-slice
-  view.addEventListener('bw-source-ready', () => maybeNudgeMiddle());
+  if (independent) {
+    // own controller → this plane scrolls on its own; start mid-volume
+    const pc = createPlaybackController({ mode: 'slice' });
+    view.playback = pc;
+    view.addEventListener('bw-source-ready', (e) => {
+      const fc = (e as CustomEvent).detail?.frameCount ?? 0;
+      if (fc > 2) pc.setFrame(Math.floor(fc / 2));
+    });
+  } else {
+    view.playback = playback;
+    // a freshly-decoded source reports frameCount here → jump volumes to mid-slice
+    view.addEventListener('bw-source-ready', () => maybeNudgeMiddle());
+  }
+  if (axis) view.setAttribute('axis', axis);
   cell.appendChild(view);
   void realizeSeries(s).then((rs) => {
-    if (cell.dataset.seriesId !== id) return; // cell changed again before decode finished
+    if (cell.dataset.viewKey !== viewKey) return; // cell changed again before decode finished
     view.source = rs.source!;
     renderRight();
-    updatePlayback(playback.getState());
+    if (!independent) updatePlayback(playback.getState());
   });
 }
 function makeDropTarget(cell: HTMLElement, index: number): void {
@@ -493,6 +577,14 @@ function makeDropTarget(cell: HTMLElement, index: number): void {
 function renderPlayback(): void {
   const root = $('#playback');
   root.innerHTML = '';
+  if (is3dActive()) {
+    // 3D has no frame transport — navigation is the camera (see the 3D toolbar).
+    const note = activeExampleObj()?.views
+      ? 'MPR planes scroll independently (wheel) · 3D: drag = orbit, wheel = zoom · DVR / MIP from the toolbar'
+      : '3D volume · drag to orbit · wheel to zoom · DVR / MIP from the 3D toolbar above';
+    root.appendChild(el('span', 'vol-note', note));
+    return;
+  }
   const mode = el('select', 'mode') as HTMLSelectElement;
   mode.innerHTML = `<option value="slice">slice</option><option value="auto">auto</option>`;
   mode.value = playback.getState().mode;

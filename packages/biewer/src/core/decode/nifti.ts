@@ -21,7 +21,16 @@
 //     k~I/S), true for MNI152 and typical brain NIfTI; we do NOT reslice
 //     arbitrarily-permuted or oblique volumes (best-effort — such volumes keep
 //     their natural in-plane order).
-import type { BiewerDecoder, FrameSource, FramePixels, PixelType, VolumeAxis } from '../types';
+import type { BiewerDecoder, FrameSource, FramePixels, PixelType, VolumeAxis, VolumeData } from '../types';
+
+/** Expose the parsed volume (for MPR / MIP / 3D rendering). */
+export function niftiVolume(bytes: Uint8Array): VolumeData {
+  const v = parseNifti(bytes);
+  let min = Infinity, max = -Infinity;
+  const d = v.data;
+  for (let i = 0; i < d.length; i++) { const x = d[i]; if (x < min) min = x; if (x > max) max = x; }
+  return { dims: [v.nx, v.ny, v.nz], spacing: v.spacing, pixelType: v.pixelType, data: v.data, min, max, format: 'nifti' };
+}
 
 type TypedCtor = Uint8ArrayConstructor | Int16ArrayConstructor | Uint16ArrayConstructor | Float32ArrayConstructor;
 

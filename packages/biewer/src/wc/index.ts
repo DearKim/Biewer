@@ -4,6 +4,9 @@
 import { createBiewerView } from '../core/view';
 import type { BiewerView, BiewerSource, ToolController, PlaybackController, VolumeAxis } from '../core/types';
 
+// <biewer-volume> — the 3D volume-rendering element (registered on import).
+export { BiewerVolumeElement, defineBiewerVolume } from './volume';
+
 const TAG = 'biewer-view';
 
 export class BiewerViewElement extends HTMLElement {

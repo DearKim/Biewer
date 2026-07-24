@@ -102,8 +102,18 @@ export const GRID_PRESETS: GridPreset[] = [
 export const GRID_MAX = { rows: 12, cols: 12 };
 
 // ---- examples --------------------------------------------------------------
-export type ExampleKind = 'layout' | 'format' | 'output' | 'compare' | 'tool';
+export type ExampleKind = 'layout' | 'format' | 'output' | 'compare' | 'tool' | '3d';
 export type ExampleTool = 'zoom' | 'pan' | 'window-level' | null;
+
+/** Per-viewport config, so ONE example can mix planes (different axes) + a 3D
+ *  cell — e.g. an MPR + 3D multi-angle layout. The host owns this composition;
+ *  the plugin just renders whatever each viewport is told to be. */
+export interface CellView {
+  kind: '2d' | '3d';
+  axis?: 'native' | 'axial' | 'coronal' | 'sagittal';
+  volMode?: 'dvr' | 'mip';
+  label?: string;
+}
 
 export interface Example {
   id: string;
@@ -119,9 +129,11 @@ export interface Example {
   mode?: 'slice' | 'auto';
   planned?: boolean;
   format?: string;             // format-kind examples
+  volMode?: 'dvr' | 'mip';     // 3d-kind examples
+  views?: CellView[];          // per-viewport config (MPR + 3D multi-angle)
 }
 
-export const EXAMPLE_CATEGORIES = ['Layouts', 'Basics', 'Output modes', 'Compare', 'Tools'] as const;
+export const EXAMPLE_CATEGORIES = ['Layouts', 'Basics', '3D', 'Output modes', 'Compare', 'Tools'] as const;
 
 export const EXAMPLES: Example[] = [
   // --- Layout (viewport freedom) — one example driven by the Grid control ---
@@ -134,6 +146,16 @@ export const EXAMPLES: Example[] = [
   { id: 'dicom', category: 'Basics', title: 'DICOM series', desc: 'A real uncompressed multiframe DICOM (pydicom emri_small) as one FrameSource.', kind: 'format', rows: 1, cols: 1, series: ['s2'], format: 'dcm' },
   { id: 'archive', category: 'Basics', title: 'Archive (zip / gz)', desc: 'Unwrap a .zip of brain-MR PNG slices (or .gz, as used by .nii.gz) and re-detect the inner format.', kind: 'format', rows: 1, cols: 1, series: ['zip'], format: 'zip' },
   { id: 'jpeg-ls', category: 'Basics', title: 'JPEG-LS (compressed DICOM)', desc: 'A real JPEG-LS lossless DICOM (pydicom emri), decoded from scratch (LOCO-I) — byte-identical to its uncompressed twin.', kind: 'format', rows: 1, cols: 1, series: ['jls'], format: 'jls' },
+
+  // --- 3D (WebGL volume rendering) — the whole decoded volume, no VTK.js ---
+  { id: 'mpr-3d', category: '3D', title: 'MPR + 3D (multi-angle)', desc: 'One volume from every angle at once: axial / coronal / sagittal planes (each scrolls independently — wheel) plus an interactive 3D volume render (drag = orbit, wheel = zoom). The host owns the 2×2 grid and tells each viewport its axis or 3D mode; the plugin just renders. (Linked crosshair is a follow-up.)', kind: '3d', rows: 2, cols: 2, series: ['s1', 's1', 's1', 's1'], views: [
+    { kind: '2d', axis: 'axial', label: 'Axial' },
+    { kind: '2d', axis: 'coronal', label: 'Coronal' },
+    { kind: '2d', axis: 'sagittal', label: 'Sagittal' },
+    { kind: '3d', volMode: 'dvr', label: '3D' },
+  ] },
+  { id: 'volume-dvr', category: '3D', title: 'Volume rendering (DVR)', desc: 'A real CT volume ray-cast in 3D — drag to orbit, wheel to zoom. The plugin decodes the whole volume once (createVolume) and renders it with a WebGL2 raycaster (front-to-back compositing). No VTK.js, no framework.', kind: '3d', rows: 1, cols: 1, series: ['ct1'], volMode: 'dvr' },
+  { id: 'volume-mip', category: '3D', title: 'Maximum intensity projection', desc: 'The same 3D raycaster in MIP mode — projects the brightest voxel along each ray (angio / bone look). Drag to orbit, wheel to zoom. Toggle DVR ⇄ MIP from the toolbar.', kind: '3d', rows: 1, cols: 1, series: ['s1'], volMode: 'mip' },
 
   // --- Output modes ---
   { id: 'slice', category: 'Output modes', title: 'Slice scroll', desc: 'Manual frame navigation (wheel / scrollbar / keyboard), rAF-coalesced.', kind: 'output', rows: 1, cols: 1, series: ['s1'], mode: 'slice' },
@@ -168,6 +190,11 @@ export const PROP_INFO: Record<string, [string, string]> = {
   onProgress: ['(p)=>void', 'fetch / decode progress (host renders the UI).'],
   onError: ['(e)=>void', 'unsupported / decode / fetch errors.'],
   onActivate: ['()=>void', 'this viewport became the active one.'],
+  mode: ["'dvr'|'mip'", '3D raycast mode: DVR compositing or max-intensity.'],
+  window: ['{lo,hi}', '3D transfer window over normalized [0,1] intensity.'],
+  opacity: ['number', 'DVR density gain (higher = more opaque).'],
+  invert: ['boolean', 'invert the 3D intensity mapping.'],
+  onReady: ['(v:VolumeData)=>void', 'decoded volume dims/spacing once loaded.'],
 };
 
 const EXT: Record<string, string> = { png: 'png', jpg: 'jpg', 'nii.gz': 'nii.gz', dcm: 'dcm', jls: 'jls', zip: 'zip', mp4: 'mp4' };
@@ -181,6 +208,7 @@ export function propsFor(ex: Example): string[] {
       ? ['source', 'playback', 'videoStep', 'frame', 'onFrameChange']
       : ['source', 'playback', 'frame', 'onFrameChange', 'scrollbar'];
     case 'tool': return ['source', 'tools'];
+    case '3d': return ex.views ? ['source', 'axis', 'mode', 'onReady', 'onError'] : ['source', 'mode', 'window', 'opacity', 'invert', 'onReady'];
     default: return ['source'];
   }
 }
@@ -201,6 +229,10 @@ export function askFor(ex: Example): string {
       return `Using @deepnoid/biewer, build a compare grid (${ex.rows}×${ex.cols}). Let the user drag a series onto any cell. Share one PlaybackController so frames stay in sync and one ToolController(scope:'all') for lockstep tools.`;
     case 'tool':
       return `Using @deepnoid/biewer, expose ${ex.tool ?? 'measurement'} through a headless ToolController and my own toolbar buttons (tools.setActiveTool / tools.apply). scope:'all' applies to every view.`;
+    case '3d':
+      return ex.views
+        ? `Using @deepnoid/biewer, build a 2×2 MPR + 3D layout of ONE volume: three <BiewerView> planes with axis 'axial' / 'coronal' / 'sagittal' (each scrolls independently — bind NO shared PlaybackController so wheel steps that plane only), plus one <BiewerVolume> (createBiewerVolumeView) for interactive 3D. I own the CSS grid; the plugin renders each viewport. Framework-agnostic, no VTK.js.`
+        : `Using @deepnoid/biewer, render a medical volume (.nii.gz / DICOM) in 3D with createBiewerVolumeView(el, { source, mode: '${ex.volMode ?? 'dvr'}' }). Drag orbits, wheel zooms. Give me toolbar buttons to toggle DVR ⇄ MIP (setMode), invert (setInvert), and reset the camera (setCamera). It must be framework-agnostic (no VTK.js) and run on WebGL2.`;
     default: return '';
   }
 }
@@ -268,6 +300,92 @@ export function codeFor(ex: Example, lang: 'core' | 'react' | 'wc'): string {
       "  container.appendChild(cell);",
       "  createBiewerView(cell, { source: src, tools, playback });",
       "}",
+    ].join('\n');
+  }
+
+  if (ex.kind === '3d' && ex.views) {
+    const vurl = '/studies/case.nii.gz';
+    if (lang === 'react') {
+      return [
+        "import { BiewerView, BiewerVolume } from '@deepnoid/biewer/react';",
+        "const src = { kind: 'url', url: '" + vurl + "' };",
+        "",
+        "// YOUR 2×2 grid — 3 MPR planes + 1 3D. No shared playback → planes",
+        "// scroll independently; each <BiewerView> steps its own axis on wheel.",
+        "<div style={{ display: 'grid', gap: 2, height: '100%',",
+        "  gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr' }}>",
+        "  <BiewerView source={src} axis=\"axial\" />",
+        "  <BiewerView source={src} axis=\"coronal\" />",
+        "  <BiewerView source={src} axis=\"sagittal\" />",
+        "  <BiewerVolume source={src} mode=\"dvr\" />",
+        "</div>",
+      ].join('\n');
+    }
+    if (lang === 'wc') {
+      return [
+        "import '@deepnoid/biewer/wc';   // <biewer-view> + <biewer-volume>",
+        "const src = { kind: 'url', url: '" + vurl + "' };",
+        "const mk = (tag, set) => { const e = document.createElement(tag); set(e); grid.appendChild(e); };",
+        "",
+        "mk('biewer-view',   (e) => { e.setAttribute('axis','axial');    e.source = src; });",
+        "mk('biewer-view',   (e) => { e.setAttribute('axis','coronal');  e.source = src; });",
+        "mk('biewer-view',   (e) => { e.setAttribute('axis','sagittal'); e.source = src; });",
+        "mk('biewer-volume', (e) => { e.setAttribute('mode','dvr');      e.source = src; });",
+      ].join('\n');
+    }
+    return [
+      "import { createBiewerView, createBiewerVolumeView } from '@deepnoid/biewer';",
+      "const src = { kind: 'url', url: '" + vurl + "' };",
+      "",
+      "// 3 MPR planes — no shared PlaybackController → independent wheel scroll",
+      "createBiewerView(cellA, { source: src, axis: 'axial' });",
+      "createBiewerView(cellB, { source: src, axis: 'coronal' });",
+      "createBiewerView(cellC, { source: src, axis: 'sagittal' });",
+      "// + interactive 3D volume render in the 4th cell",
+      "createBiewerVolumeView(cellD, { source: src, mode: 'dvr' });",
+    ].join('\n');
+  }
+
+  if (ex.kind === '3d') {
+    const vurl = '/studies/case.nii.gz';
+    const m = ex.volMode ?? 'dvr';
+    if (lang === 'react') {
+      return [
+        "import { BiewerVolume } from '@deepnoid/biewer/react';",
+        "",
+        "const [mode, setMode] = useState<'dvr' | 'mip'>('" + m + "');",
+        "",
+        "<BiewerVolume",
+        `  source={{ kind: 'url', url: '${vurl}' }}`,
+        "  mode={mode}",
+        "  onReady={(v) => console.log(v.dims, v.spacing)}",
+        "/>",
+        "<button onClick={() => setMode(mode === 'dvr' ? 'mip' : 'dvr')}>DVR ⇄ MIP</button>",
+      ].join('\n');
+    }
+    if (lang === 'wc') {
+      return [
+        "import '@deepnoid/biewer/wc';",
+        "const el = document.createElement('biewer-volume');",
+        `el.source = { kind: 'url', url: '${vurl}' };`,
+        `el.setAttribute('mode', '${m}');            // 'dvr' | 'mip'`,
+        "el.addEventListener('bw-ready', (e) => console.log(e.detail.dims));",
+        "container.appendChild(el);",
+        "// drag orbits, wheel zooms; toggle mode via the attribute/property",
+      ].join('\n');
+    }
+    return [
+      "import { createBiewerVolumeView } from '@deepnoid/biewer';",
+      "",
+      "const view = createBiewerVolumeView(el, {",
+      `  source: { kind: 'url', url: '${vurl}' },`,
+      `  mode: '${m}',              // 'dvr' | 'mip'`,
+      "  onReady: (v) => console.log(v.dims, v.spacing),",
+      "});",
+      "// drag = orbit, wheel = zoom. Wire your own toolbar buttons:",
+      "modeBtn.onclick  = () => view.setMode('mip');",
+      "invertBtn.onclick = () => view.setInvert(true);",
+      "resetBtn.onclick = () => view.setCamera({ azimuth: 0.6, elevation: 0.35, distance: 2.4 });",
     ].join('\n');
   }
 

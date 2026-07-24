@@ -26,6 +26,7 @@
 |-------|---------------|---------|------|
 | skill-07-view-canvas.md | Canvas 2D 렌더 경로(이미지/동영상), dpr, ViewState(transform) 합성 | [prd-view-layout](../../prd/prd-view-layout.md) | 계획 |
 | skill-21-webgl-gray-pipeline.md | gray 의료 볼륨 WebGL 경로(16bit 텍스처, W/L 셰이더) — Canvas 경로와 결과 동일 보장 | prd-view-layout / prd-tool-binding | 계획 |
+| [skill-22-volume-3d.md](skill-22-volume-3d.md) | **3D 볼륨 렌더링** — WebGL2 레이캐스터(DVR/MIP), `createVolume`/`createBiewerVolumeView`/`<biewer-volume>`/`<BiewerVolume>`, 카메라 오빗·줌. VTK.js 무의존 | prd-view-layout / prd-format-support | **구현됨** |
 | skill-08-resize-contract.md | ResizeObserver 동기 리사이즈 (window resize 만으로는 CSS 축소 미추종) | prd-view-layout | 계획 |
 | skill-09-overlay-slot.md | children 합성, pointer-events 규약, 크기 불간섭 | prd-view-layout | 계획 |
 | skill-10-window-level.md | gray8/16/float32 W/L LUT | [prd-tool-binding](../../prd/prd-tool-binding.md) | 계획 |

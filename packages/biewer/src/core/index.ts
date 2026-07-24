@@ -6,6 +6,11 @@ import { registerBuiltins } from './decode/builtins';
 registerBuiltins();
 
 export { createBiewerView } from './view';
+export { createVolume, frameSourceToVolume } from './volume';
+export type { CreateVolumeOptions } from './volume';
+export { createBiewerVolumeView } from './volumeView';
+export type { BiewerVolumeView, BiewerVolumeViewOptions } from './volumeView';
+export type { VolumeRenderMode, VolumeCamera, VolumeRenderState } from './render/volume3d';
 export { createToolController } from './controllers/tool';
 export type { ToolControllerOptions } from './controllers/tool';
 export { createPlaybackController } from './controllers/playback';

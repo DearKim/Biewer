@@ -72,6 +72,17 @@ export type FrameSourceInfo = Pick<FrameSource, 'frameCount' | 'frameSize' | 'pi
   meta: FrameSourceMeta;
 };
 
+/** A decoded 3D volume (for MPR / MIP / volume rendering). */
+export interface VolumeData {
+  dims: [number, number, number];          // nx, ny, nz
+  spacing: [number, number, number];       // mm per voxel
+  pixelType: PixelType;
+  data: Uint8Array | Int16Array | Uint16Array | Float32Array; // length nx*ny*nz
+  min: number;
+  max: number;
+  format?: ResolvedFormat;
+}
+
 // ---------------------------------------------------------------------------
 // Errors / progress
 // ---------------------------------------------------------------------------
