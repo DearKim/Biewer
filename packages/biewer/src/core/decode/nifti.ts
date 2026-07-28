@@ -29,7 +29,7 @@ export function niftiVolume(bytes: Uint8Array): VolumeData {
   let min = Infinity, max = -Infinity;
   const d = v.data;
   for (let i = 0; i < d.length; i++) { const x = d[i]; if (x < min) min = x; if (x > max) max = x; }
-  return { dims: [v.nx, v.ny, v.nz], spacing: v.spacing, pixelType: v.pixelType, data: v.data, min, max, format: 'nifti' };
+  return { dims: [v.nx, v.ny, v.nz], spacing: v.spacing, pixelType: v.pixelType, data: v.data, min, max, format: 'nifti', voxelToWorld: v.voxelToWorld };
 }
 
 type TypedCtor = Uint8ArrayConstructor | Int16ArrayConstructor | Uint16ArrayConstructor | Float32ArrayConstructor;
@@ -49,6 +49,8 @@ export interface Vol {
   pixelType: PixelType;
   /** voxel->world orientation; absent means "assume RAS+ identity". */
   orient?: Orient;
+  /** voxel index → world (RAS mm), 4×4 column-major. */
+  voxelToWorld?: Float32Array;
 }
 
 /** NIfTI magic "n+1" or "ni1" at byte 344 (uncompressed .nii). gz is handled upstream. */
@@ -118,7 +120,40 @@ function parseNifti(bytes: Uint8Array): Vol {
     data = new (Ctor as Uint16ArrayConstructor)(slice) as Vol['data'];
     if (!le && bpv === 2) swap16(data as Uint16Array);
   }
-  return { data, nx, ny, nz, spacing: [sx, sy, sz], pixelType, orient: readOrient(i16, f32) };
+  return { data, nx, ny, nz, spacing: [sx, sy, sz], pixelType, orient: readOrient(i16, f32), voxelToWorld: buildNiftiAffine(i16, f32, [sx, sy, sz]) };
+}
+
+/** voxel index [i,j,k,1] → world (RAS mm), 4×4 column-major. sform → qform → pixdim. */
+function buildNiftiAffine(i16: (o: number) => number, f32: (o: number) => number, spacing: [number, number, number]): Float32Array {
+  const M = new Float32Array(16);
+  const col = (c: number, x: number, y: number, z: number, w: number) => { M[c * 4] = x; M[c * 4 + 1] = y; M[c * 4 + 2] = z; M[c * 4 + 3] = w; };
+  const sformCode = i16(254), qformCode = i16(252);
+  if (sformCode > 0) {
+    // srow_x/y/z rows: world = A·voxel + t
+    col(0, f32(280), f32(296), f32(312), 0);
+    col(1, f32(284), f32(300), f32(316), 0);
+    col(2, f32(288), f32(304), f32(320), 0);
+    col(3, f32(292), f32(308), f32(324), 1);
+    return M;
+  }
+  if (qformCode > 0) {
+    const b = f32(256), c = f32(260), d = f32(264);
+    const a = Math.sqrt(Math.max(0, 1 - (b * b + c * c + d * d)));
+    const qfac = f32(76) < 0 ? -1 : 1;
+    const R = [
+      [a * a + b * b - c * c - d * d, 2 * (b * c - a * d), 2 * (b * d + a * c)],
+      [2 * (b * c + a * d), a * a + c * c - b * b - d * d, 2 * (c * d - a * b)],
+      [2 * (b * d - a * c), 2 * (c * d + a * b), a * a + d * d - b * b - c * c],
+    ];
+    const [dx, dy, dz] = spacing;
+    col(0, R[0][0] * dx, R[1][0] * dx, R[2][0] * dx, 0);
+    col(1, R[0][1] * dy, R[1][1] * dy, R[2][1] * dy, 0);
+    col(2, R[0][2] * dz * qfac, R[1][2] * dz * qfac, R[2][2] * dz * qfac, 0);
+    col(3, f32(268), f32(272), f32(276), 1);
+    return M;
+  }
+  col(0, spacing[0], 0, 0, 0); col(1, 0, spacing[1], 0, 0); col(2, 0, 0, spacing[2], 0); col(3, 0, 0, 0, 1);
+  return M;
 }
 
 /**

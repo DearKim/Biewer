@@ -81,6 +81,13 @@ export interface VolumeData {
   min: number;
   max: number;
   format?: ResolvedFormat;
+  /**
+   * voxel index [i,j,k,1] → world (patient, RAS mm), 4×4 column-major.
+   * Present for oriented volumes (NIfTI sform/qform, DICOM IOP/IPP). Lets the
+   * renderer place the volume and reslice anatomically (axial/coronal/sagittal,
+   * incl. oblique). Absent ⇒ treat as axis-aligned by `spacing`.
+   */
+  voxelToWorld?: Float32Array;
 }
 
 // ---------------------------------------------------------------------------

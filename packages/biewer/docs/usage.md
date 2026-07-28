@@ -137,8 +137,32 @@ import { BiewerVolume } from '@deepnoid/biewer/react';
 ```
 
 `createBiewerVolumeView(el, opts)` 핸들: `setMode('dvr'|'mip')` · `setWindow(lo,hi)` · `setOpacity(o)` ·
-`setInvert(b)` · `setCamera({azimuth,elevation,distance})` · `getCamera()` · `getVolume()` · `resize()` ·
-`capture(): Promise<Blob>` · `dispose()`. WebGL2 미지원 환경은 `onError`(`DECODE_FAILED`)로 명확히 실패한다.
+`setInvert(b)` · `setCamera({q}|{azimuth,elevation}|{distance})` · `getCamera()` · `getVolume()` · `resize()` ·
+`capture(): Promise<Blob>` · `dispose()`. 카메라는 쿼터니언 트랙볼(모든 방향 360° 자유 회전). WebGL2 미지원 환경은 `onError`(`DECODE_FAILED`).
+
+### MPR (axial / coronal / sagittal) — GPU affine 리슬라이스
+
+방향 좌표가 있는 볼륨(NIfTI sform/qform, DICOM IOP/IPP)을 **한 번** 디코드하면 `VolumeData.voxelToWorld`
+(voxel→world affine)가 실린다. `createBiewerMPRView` 가 이를 3D 텍스처로 올려 셰이더에서 화면→월드→복셀로
+매핑해 **해부학적으로 정확한**(사선 포함) 평면을 GPU 리슬라이스한다. 여러 평면이 하나의 `createMPRCrosshair`
+(월드 좌표)를 공유해 링크된다.
+
+```typescript
+import { createVolume, createBiewerMPRView, createMPRCrosshair, volumeWorldBounds, createBiewerVolumeView } from '@deepnoid/biewer';
+
+const vol = await createVolume({ kind: 'url', url: '/studies/case.nii.gz' }); // 1회 디코드 → 원본 그리드 + affine
+const cross = createMPRCrosshair(volumeWorldBounds(vol).center);              // 공유 월드 좌표
+
+createBiewerMPRView(cellA, { volume: vol, plane: 'axial',    crosshair: cross });
+createBiewerMPRView(cellB, { volume: vol, plane: 'coronal',  crosshair: cross });
+createBiewerMPRView(cellC, { volume: vol, plane: 'sagittal', crosshair: cross });
+createBiewerVolumeView(cellD, { volume: vol, mode: 'dvr' });                  // 같은 볼륨 공유(VR)
+// 평면 클릭 → 나머지 평면에서 크로스헤어 이동 · 스크롤 → 그 평면의 슬라이스 이동
+```
+
+`createBiewerMPRView(el, {volume, plane, crosshair, window?, invert?})` 핸들: `setWindow(lo,hi)` · `setInvert(b)` ·
+`resize()` · `dispose()`. `MPRCrosshair`: `get()` · `set(worldPoint)` · `subscribe(fn)`. 오리엔테이션 없는 볼륨은
+축정렬 affine(spacing)으로 폴백(리슬라이스는 되지만 사선은 근사).
 
 ---
 
@@ -216,7 +240,7 @@ registerDecoder(myTiffDecoder);
 
 | Subpath | 내용 |
 |---|---|
-| `@deepnoid/biewer` | `createBiewerView`, `createVolume`, `createBiewerVolumeView`, 컨트롤러, 전역 주입 함수, 타입 |
+| `@deepnoid/biewer` | `createBiewerView`, `createVolume`, `createBiewerVolumeView`, `createBiewerMPRView`, `createMPRCrosshair`, `volumeWorldBounds`, 컨트롤러, 전역 주입 함수, 타입 |
 | `@deepnoid/biewer/react` | `<BiewerView>`, `<BiewerVolume>`, `useBiewerTools`, `useBiewerPlayback` |
 | `@deepnoid/biewer/wc` | `<biewer-view>`, `<biewer-volume>` 등록 |
 | `@deepnoid/biewer/style.css` | 컴파일된 스타일 (`bw-` prefix) |

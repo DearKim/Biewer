@@ -1,7 +1,7 @@
 import './styles.css';
 import '@deepnoid/biewer/wc';
-import { createToolController, createPlaybackController, createVolume } from '@deepnoid/biewer';
-import type { ToolController, PlaybackController, BiewerTool, BiewerSource } from '@deepnoid/biewer';
+import { createToolController, createPlaybackController, createVolume, createBiewerMPRView, createMPRCrosshair, volumeWorldBounds } from '@deepnoid/biewer';
+import type { ToolController, PlaybackController, BiewerTool, BiewerSource, VolumeData, MPRCrosshair, MPRAxis, BiewerMPRView } from '@deepnoid/biewer';
 import type { BiewerViewElement, BiewerVolumeElement } from '@deepnoid/biewer/wc';
 import {
   SERIES, CURRENT_SERIES, PRIOR_SERIES, EXAMPLES, EXAMPLE_CATEGORIES, HOW_TO, PROP_INFO, GRID_MAX, GRID_PRESETS,
@@ -50,6 +50,26 @@ function el(tag: string, cls?: string, html?: string): HTMLElement {
 }
 const uploads: Series[] = []; // user-uploaded volumes (file / zip / folder)
 const seriesById = (id: string): Series => uploads.find((s) => s.id === id) ?? SERIES.find((s) => s.id === id)!;
+
+// Shared MPR session: decode the volume ONCE and share it + one crosshair across
+// the axial/coronal/sagittal plane cells of the MPR example.
+interface MprSession { seriesId: string; crosshair: MPRCrosshair; promise: Promise<VolumeData | null>; }
+let mprSession: MprSession | null = null;
+function ensureMprSession(seriesId: string): MprSession {
+  if (mprSession && mprSession.seriesId === seriesId) return mprSession;
+  const crosshair = createMPRCrosshair([0, 0, 0]);
+  const promise = realizeSeries(seriesById(seriesId))
+    .then((rs) => createVolume(rs.source!))
+    .then((vol) => { crosshair.set(volumeWorldBounds(vol).center); return vol; })
+    .catch(() => null);
+  mprSession = { seriesId, crosshair, promise };
+  return mprSession;
+}
+/** Dispose any core view (MPR / volume) attached to a cell before it rebuilds. */
+function disposeCellCore(cell: HTMLElement): void {
+  const v = (cell as unknown as { _coreView?: { dispose(): void } })._coreView;
+  if (v) { v.dispose(); (cell as unknown as { _coreView?: unknown })._coreView = undefined; }
+}
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -245,6 +265,7 @@ function applyExample(ex: Example): void {
   const wholeKind: '2d' | '3d' = ex.kind === '3d' ? '3d' : '2d';
   state.cellViews = Array.from({ length: ex.rows * ex.cols }, (_, i) =>
     ex.views?.[i] ?? { kind: wholeKind, volMode: ex.volMode });
+  if (!ex.views?.some((v) => v.kind === 'mpr')) mprSession = null; // free the shared volume
   if (ex.tool !== undefined) tools.setActiveTool(ex.tool);
   if (ex.mode) playback.setMode(ex.mode);
   if (ex.kind === '3d') { state.vol.mode = ex.volMode ?? 'dvr'; state.vol.invert = false; }
@@ -283,6 +304,7 @@ function loadUpload(files: File[]): void {
   void makeThumb(series).then(() => renderRight());
 
   // show it in the MPR + 3D layout (all four viewports = the uploaded volume)
+  mprSession = null; // new upload reuses the 'upload' id → force a fresh decode
   const ex = EXAMPLES.find((e) => e.id === 'mpr-3d')!;
   applyExample(ex);
   state.selected = state.selected.map(() => 'upload');
@@ -596,7 +618,7 @@ async function rebuildStage(): Promise<void> {
   stage.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
   fitSelection(n);
   // grow/shrink cell wrappers (drop handlers bound once per wrapper)
-  while (stage.children.length > n) stage.removeChild(stage.lastElementChild!);
+  while (stage.children.length > n) { disposeCellCore(stage.lastElementChild as HTMLElement); stage.removeChild(stage.lastElementChild!); }
   for (let i = stage.children.length; i < n; i++) {
     const cell = el('div', 'cell');
     makeDropTarget(cell, i);
@@ -625,6 +647,7 @@ function renderCell(cell: HTMLElement, i: number): void {
   cell.dataset.viewKey = viewKey;
   cell.dataset.seriesId = id;
   cell.dataset.kind = kind;
+  disposeCellCore(cell);   // core MPR/volume views need explicit dispose (no WC lifecycle)
   cell.innerHTML = ''; // removing the old <biewer-view>/<biewer-volume> disconnects it → core dispose()
   cell.classList.toggle('empty', !id);
   if (!id) {
@@ -639,6 +662,25 @@ function renderCell(cell: HTMLElement, i: number): void {
   x.onclick = (ev) => { ev.stopPropagation(); clearCell(i); };
   badge.appendChild(x);
   cell.appendChild(badge);
+
+  if (kind === 'mpr') {
+    // GPU affine reslice — 3 planes share ONE decoded volume + one crosshair
+    const host = el('div', 'mpr-host');
+    host.style.cssText = 'position:absolute;inset:0;';
+    cell.appendChild(host);
+    const loading = el('div', 'mpr-load', 'reslicing…');
+    host.appendChild(loading);
+    const session = ensureMprSession(id);
+    void session.promise.then((vol) => {
+      if (cell.dataset.viewKey !== viewKey) return;
+      loading.remove();
+      if (!vol) { host.appendChild(el('div', 'mpr-load', 'MPR 디코드 실패')); return; }
+      (cell as unknown as { _coreView?: BiewerMPRView })._coreView =
+        createBiewerMPRView(host, { volume: vol, plane: (axis || 'axial') as MPRAxis, crosshair: session.crosshair });
+      renderRight();
+    });
+    return;
+  }
 
   if (kind === '3d') {
     const vol = document.createElement('biewer-volume') as BiewerVolumeElement;

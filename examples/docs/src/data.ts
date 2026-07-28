@@ -109,7 +109,7 @@ export type ExampleTool = 'zoom' | 'pan' | 'window-level' | null;
  *  cell — e.g. an MPR + 3D multi-angle layout. The host owns this composition;
  *  the plugin just renders whatever each viewport is told to be. */
 export interface CellView {
-  kind: '2d' | '3d';
+  kind: '2d' | '3d' | 'mpr';   // 'mpr' = GPU affine reslice (shares volume+crosshair)
   axis?: 'native' | 'axial' | 'coronal' | 'sagittal';
   volMode?: 'dvr' | 'mip';
   label?: string;
@@ -148,10 +148,10 @@ export const EXAMPLES: Example[] = [
   { id: 'jpeg-ls', category: 'Basics', title: 'JPEG-LS (compressed DICOM)', desc: 'A real JPEG-LS lossless DICOM (pydicom emri), decoded from scratch (LOCO-I) — byte-identical to its uncompressed twin.', kind: 'format', rows: 1, cols: 1, series: ['jls'], format: 'jls' },
 
   // --- 3D (WebGL volume rendering) — the whole decoded volume, no VTK.js ---
-  { id: 'mpr-3d', category: '3D', title: 'MPR + 3D (multi-angle)', desc: 'One volume from every angle at once: axial / coronal / sagittal planes (each scrolls independently — wheel) plus an interactive 3D volume render (drag = orbit, wheel = zoom). The host owns the 2×2 grid and tells each viewport its axis or 3D mode; the plugin just renders. (Linked crosshair is a follow-up.)', kind: '3d', rows: 2, cols: 2, series: ['s1', 's1', 's1', 's1'], views: [
-    { kind: '2d', axis: 'axial', label: 'Axial' },
-    { kind: '2d', axis: 'coronal', label: 'Coronal' },
-    { kind: '2d', axis: 'sagittal', label: 'Sagittal' },
+  { id: 'mpr-3d', category: '3D', title: 'MPR + 3D (multi-angle)', desc: 'One oriented volume (NIfTI/DICOM), decoded once and shared: axial / coronal / sagittal planes GPU-resliced through the voxel→world affine (anatomically correct, incl. oblique) + an interactive 3D render. Click any plane to move the linked crosshair; scroll to change that plane’s slice. The host owns the 2×2 grid; the plugin reslices/renders.', kind: '3d', rows: 2, cols: 2, series: ['s1', 's1', 's1', 's1'], views: [
+    { kind: 'mpr', axis: 'axial', label: 'Axial' },
+    { kind: 'mpr', axis: 'coronal', label: 'Coronal' },
+    { kind: 'mpr', axis: 'sagittal', label: 'Sagittal' },
     { kind: '3d', volMode: 'dvr', label: '3D' },
   ] },
   { id: 'volume-dvr', category: '3D', title: 'Volume rendering (DVR)', desc: 'A real CT volume ray-cast in 3D — drag to orbit, wheel to zoom. The plugin decodes the whole volume once (createVolume) and renders it with a WebGL2 raycaster (front-to-back compositing). No VTK.js, no framework.', kind: '3d', rows: 1, cols: 1, series: ['ct1'], volMode: 'dvr' },
@@ -195,6 +195,9 @@ export const PROP_INFO: Record<string, [string, string]> = {
   opacity: ['number', 'DVR density gain (higher = more opaque).'],
   invert: ['boolean', 'invert the 3D intensity mapping.'],
   onReady: ['(v:VolumeData)=>void', 'decoded volume dims/spacing once loaded.'],
+  volume: ['VolumeData', 'decoded once (createVolume); shared across MPR/3D views.'],
+  plane: ["'axial'|'coronal'|'sagittal'", 'MPR reslice plane (GPU, via the affine).'],
+  crosshair: ['MPRCrosshair', 'shared world point; click links planes, scroll = slice.'],
 };
 
 const EXT: Record<string, string> = { png: 'png', jpg: 'jpg', 'nii.gz': 'nii.gz', dcm: 'dcm', jls: 'jls', zip: 'zip', mp4: 'mp4' };
@@ -208,7 +211,7 @@ export function propsFor(ex: Example): string[] {
       ? ['source', 'playback', 'videoStep', 'frame', 'onFrameChange']
       : ['source', 'playback', 'frame', 'onFrameChange', 'scrollbar'];
     case 'tool': return ['source', 'tools'];
-    case '3d': return ex.views ? ['source', 'axis', 'mode', 'onReady', 'onError'] : ['source', 'mode', 'window', 'opacity', 'invert', 'onReady'];
+    case '3d': return ex.views ? ['volume', 'plane', 'crosshair', 'window', 'onError'] : ['source', 'mode', 'window', 'opacity', 'invert', 'onReady'];
     default: return ['source'];
   }
 }
@@ -231,7 +234,7 @@ export function askFor(ex: Example): string {
       return `Using @deepnoid/biewer, expose ${ex.tool ?? 'measurement'} through a headless ToolController and my own toolbar buttons (tools.setActiveTool / tools.apply). scope:'all' applies to every view.`;
     case '3d':
       return ex.views
-        ? `Using @deepnoid/biewer, build a 2×2 MPR + 3D layout of ONE volume: three <BiewerView> planes with axis 'axial' / 'coronal' / 'sagittal' (each scrolls independently — bind NO shared PlaybackController so wheel steps that plane only), plus one <BiewerVolume> (createBiewerVolumeView) for interactive 3D. Let me upload my own data — a single file, a .zip, or a DICOM folder — via { kind: 'file', file: File | File[] } (a File[] of single-frame slices is stacked into one ordered volume) and show it in all four viewports. I own the CSS grid; the plugin renders each viewport. Framework-agnostic, no VTK.js.`
+        ? `Using @deepnoid/biewer, build a 2×2 MPR + 3D view of ONE oriented volume (NIfTI/DICOM): decode it once with createVolume(), then render axial/coronal/sagittal with createBiewerMPRView(el, { volume, plane, crosshair }) — GPU-resliced through the voxel→world affine so it's anatomically correct (incl. oblique). Share one createMPRCrosshair() across the three planes so clicking one moves the linked crosshair in the others; scroll changes that plane's slice. Add a createBiewerVolumeView for the 3D cell. Let me upload my own data (file / .zip / DICOM folder) via { kind:'file', file: File|File[] } — a File[] of single-frame slices is stacked into one ordered volume. Framework-agnostic, no VTK.js.`
         : `Using @deepnoid/biewer, render a medical volume (.nii.gz / DICOM) in 3D with createBiewerVolumeView(el, { source, mode: '${ex.volMode ?? 'dvr'}' }). Drag orbits, wheel zooms. Give me toolbar buttons to toggle DVR ⇄ MIP (setMode), invert (setInvert), and reset the camera (setCamera). It must be framework-agnostic (no VTK.js) and run on WebGL2.`;
     default: return '';
   }
@@ -307,42 +310,46 @@ export function codeFor(ex: Example, lang: 'core' | 'react' | 'wc'): string {
     const vurl = '/studies/case.nii.gz';
     if (lang === 'react') {
       return [
-        "import { BiewerView, BiewerVolume } from '@deepnoid/biewer/react';",
+        "// React: wrap the imperative MPR views (decode once, shared crosshair).",
         "const src = { kind: 'url', url: '" + vurl + "' };",
-        "",
-        "// YOUR 2×2 grid — 3 MPR planes + 1 3D. No shared playback → planes",
-        "// scroll independently; each <BiewerView> steps its own axis on wheel.",
-        "<div style={{ display: 'grid', gap: 2, height: '100%',",
-        "  gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr' }}>",
-        "  <BiewerView source={src} axis=\"axial\" />",
-        "  <BiewerView source={src} axis=\"coronal\" />",
-        "  <BiewerView source={src} axis=\"sagittal\" />",
-        "  <BiewerVolume source={src} mode=\"dvr\" />",
-        "</div>",
+        "const vol = await createVolume(src);          // one decode → RAW grid + affine",
+        "const cross = createMPRCrosshair(volumeWorldBounds(vol).center);",
+        "useEffect(() => {",
+        "  const views = [",
+        "    createBiewerMPRView(axialRef.current,    { volume: vol, plane: 'axial',    crosshair: cross }),",
+        "    createBiewerMPRView(coronalRef.current,  { volume: vol, plane: 'coronal',  crosshair: cross }),",
+        "    createBiewerMPRView(sagittalRef.current, { volume: vol, plane: 'sagittal', crosshair: cross }),",
+        "    createBiewerVolumeView(vrRef.current,     { volume: vol, mode: 'dvr' }),",
+        "  ];",
+        "  return () => views.forEach((v) => v.dispose());",
+        "}, []);",
+        "// click a plane → the shared crosshair jumps in the others; scroll = slice",
       ].join('\n');
     }
     if (lang === 'wc') {
       return [
-        "import '@deepnoid/biewer/wc';   // <biewer-view> + <biewer-volume>",
-        "const src = { kind: 'url', url: '" + vurl + "' };",
-        "const mk = (tag, set) => { const e = document.createElement(tag); set(e); grid.appendChild(e); };",
-        "",
-        "mk('biewer-view',   (e) => { e.setAttribute('axis','axial');    e.source = src; });",
-        "mk('biewer-view',   (e) => { e.setAttribute('axis','coronal');  e.source = src; });",
-        "mk('biewer-view',   (e) => { e.setAttribute('axis','sagittal'); e.source = src; });",
-        "mk('biewer-volume', (e) => { e.setAttribute('mode','dvr');      e.source = src; });",
+        "import { createVolume, createBiewerMPRView, createMPRCrosshair, volumeWorldBounds, createBiewerVolumeView } from '@deepnoid/biewer';",
+        "const vol = await createVolume({ kind: 'url', url: '" + vurl + "' });",
+        "const cross = createMPRCrosshair(volumeWorldBounds(vol).center);",
+        "createBiewerMPRView(cellA, { volume: vol, plane: 'axial',    crosshair: cross });",
+        "createBiewerMPRView(cellB, { volume: vol, plane: 'coronal',  crosshair: cross });",
+        "createBiewerMPRView(cellC, { volume: vol, plane: 'sagittal', crosshair: cross });",
+        "createBiewerVolumeView(cellD, { volume: vol, mode: 'dvr' });",
       ].join('\n');
     }
     return [
-      "import { createBiewerView, createBiewerVolumeView } from '@deepnoid/biewer';",
-      "const src = { kind: 'url', url: '" + vurl + "' };",
+      "import { createVolume, createBiewerMPRView, createMPRCrosshair, volumeWorldBounds, createBiewerVolumeView } from '@deepnoid/biewer';",
       "",
-      "// 3 MPR planes — no shared PlaybackController → independent wheel scroll",
-      "createBiewerView(cellA, { source: src, axis: 'axial' });",
-      "createBiewerView(cellB, { source: src, axis: 'coronal' });",
-      "createBiewerView(cellC, { source: src, axis: 'sagittal' });",
-      "// + interactive 3D volume render in the 4th cell",
-      "createBiewerVolumeView(cellD, { source: src, mode: 'dvr' });",
+      "// decode the oriented volume ONCE → raw voxel grid + voxel→world affine",
+      "const vol = await createVolume({ kind: 'url', url: '" + vurl + "' });",
+      "const cross = createMPRCrosshair(volumeWorldBounds(vol).center);   // shared world point",
+      "",
+      "// GPU affine reslice — anatomically correct planes, linked by the crosshair",
+      "createBiewerMPRView(cellA, { volume: vol, plane: 'axial',    crosshair: cross });",
+      "createBiewerMPRView(cellB, { volume: vol, plane: 'coronal',  crosshair: cross });",
+      "createBiewerMPRView(cellC, { volume: vol, plane: 'sagittal', crosshair: cross });",
+      "createBiewerVolumeView(cellD, { volume: vol, mode: 'dvr' });       // shares the volume",
+      "// click any plane → crosshair jumps in the others; scroll = that plane's slice",
     ].join('\n');
   }
 

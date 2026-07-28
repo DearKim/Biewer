@@ -6,7 +6,7 @@
 //   1.2.840.10008.1.2.4.81 JPEG-LS Near-Lossless (decoded when NEAR=0)
 // Other compressed pixel data (JPEG baseline .50/.51, JPEG2000 .90/.91, RLE .5x)
 // still reports DECODE_FAILED — those codecs are out of scope.
-import type { BiewerDecoder, FrameSource, FramePixels, PixelType, VolumeAxis } from '../types';
+import type { BiewerDecoder, FrameSource, FramePixels, PixelType, VolumeAxis, VolumeData } from '../types';
 import { decodeJpegLS } from './jpegls';
 import { volumeFrameSource, type Vol, type Orient } from './nifti';
 
@@ -35,7 +35,7 @@ export const dicomDecoder: BiewerDecoder = {
 };
 
 /** cheap check: 'DICM' magic at byte 128 (used to filter folder/zip extras). */
-function isLikelyDicom(b: Uint8Array): boolean {
+export function isLikelyDicom(b: Uint8Array): boolean {
   return b.length >= 132 && b[128] === 0x44 && b[129] === 0x49 && b[130] === 0x43 && b[131] === 0x4d;
 }
 
@@ -281,6 +281,90 @@ export async function dicomSeriesFrameSource(files: Uint8Array[], axis: VolumeAx
   for (let k = 0; k < nz; k++) (data as { set(a: ArrayLike<number>, o: number): void }).set(slices[k].data as ArrayLike<number>, k * plane);
   const vol: Vol = { data, nx, ny, nz, spacing, pixelType: first.pixelType, orient: orientFromIOP(iop) };
   return volumeFrameSource(vol, 'dicom', axis);
+}
+
+/** voxel index [i(col),j(row),k(slice),1] → world (RAS mm), 4×4 column-major. */
+function buildDicomAffine(
+  iop: number[] | null, ps: [number, number] | null,
+  ippF: [number, number, number] | null, ippL: [number, number, number] | null, nz: number,
+): { M: Float32Array; zsp: number } {
+  const M = new Float32Array(16);
+  const col = (c: number, x: number, y: number, z: number, w: number) => { M[c * 4] = x; M[c * 4 + 1] = y; M[c * 4 + 2] = z; M[c * 4 + 3] = w; };
+  const colSp = ps ? ps[1] : 1, rowSp = ps ? ps[0] : 1;
+  if (!iop || iop.length < 6 || !ippF) {
+    col(0, colSp, 0, 0, 0); col(1, 0, rowSp, 0, 0); col(2, 0, 0, 1, 0); col(3, 0, 0, 0, 1);
+    return { M, zsp: 1 };
+  }
+  const X = iop.slice(0, 3), Y = iop.slice(3, 6); // row (col-index) dir, col (row-index) dir
+  let kx: number, ky: number, kz: number, zsp: number;
+  if (ippL && nz > 1) {
+    kx = (ippL[0] - ippF[0]) / (nz - 1); ky = (ippL[1] - ippF[1]) / (nz - 1); kz = (ippL[2] - ippF[2]) / (nz - 1);
+    zsp = Math.hypot(kx, ky, kz) || 1;
+  } else {
+    kx = X[1] * Y[2] - X[2] * Y[1]; ky = X[2] * Y[0] - X[0] * Y[2]; kz = X[0] * Y[1] - X[1] * Y[0]; zsp = 1;
+  }
+  col(0, X[0] * colSp, X[1] * colSp, X[2] * colSp, 0);
+  col(1, Y[0] * rowSp, Y[1] * rowSp, Y[2] * rowSp, 0);
+  col(2, kx, ky, kz, 0);
+  col(3, ippF[0], ippF[1], ippF[2], 1);
+  // DICOM is LPS; convert to RAS by negating world x and y (rows 0 and 1)
+  for (let c = 0; c < 4; c++) { M[c * 4] = -M[c * 4]; M[c * 4 + 1] = -M[c * 4 + 1]; }
+  return { M, zsp };
+}
+
+/** Decode a DICOM series (folder/zip files, or one multiframe) into a RAW voxel
+ *  grid + voxel→world affine — for 3D/MPR. Ordered by ImagePositionPatient. */
+export async function dicomVolume(files: Uint8Array[]): Promise<VolumeData> {
+  const parsed: { fs: FrameSource; geom: Geom }[] = [];
+  for (const b of files) {
+    try { parsed.push({ fs: dicomFrameSource(b), geom: readGeom(b) }); } catch { /* skip junk */ }
+  }
+  if (parsed.length === 0) throw decodeErr('no decodable DICOM slice in the series');
+
+  const iop = parsed[0].geom.iop;
+  let normal: [number, number, number] | null = null;
+  if (iop && iop.length >= 6) {
+    const r = iop.slice(0, 3), c = iop.slice(3, 6);
+    normal = [r[1] * c[2] - r[2] * c[1], r[2] * c[0] - r[0] * c[2], r[0] * c[1] - r[1] * c[0]];
+  }
+  const proj = (g: Geom): number | null => normal && g.ipp ? g.ipp[0] * normal[0] + g.ipp[1] * normal[1] + g.ipp[2] * normal[2] : null;
+  parsed.sort((a, b) => {
+    const pa = proj(a.geom), pb = proj(b.geom);
+    if (pa != null && pb != null) return pa - pb;
+    return (a.geom.instance || 0) - (b.geom.instance || 0);
+  });
+
+  const slices: FramePixels[] = [];
+  for (const p of parsed) for (let f = 0; f < p.fs.frameCount; f++) slices.push(await p.fs.getFrame(f));
+  parsed.forEach((p) => p.fs.dispose());
+  const first = slices[0];
+  if (first.pixelType === 'rgba8') throw decodeErr('3D 렌더는 gray 볼륨만 지원합니다 (rgba DICOM 아님)');
+
+  const nx = first.width, ny = first.height, nz = slices.length;
+  const ps = parsed[0].geom.ps;
+  const { M, zsp } = buildDicomAffine(iop, ps, parsed[0].geom.ipp, parsed[nz - 1].geom.ipp, nz);
+
+  const Ctor = first.data.constructor as new (n: number) => Uint8Array | Int16Array | Uint16Array | Float32Array;
+  const data = new Ctor(nx * ny * nz);
+  const plane = nx * ny;
+  let min = Infinity, max = -Infinity;
+  for (let k = 0; k < nz; k++) {
+    const src = slices[k].data as ArrayLike<number>;
+    (data as { set(a: ArrayLike<number>, o: number): void }).set(src, k * plane);
+    for (let i = 0; i < plane; i++) { const v = src[i]; if (v < min) min = v; if (v > max) max = v; }
+  }
+  if (!isFinite(min)) { min = 0; max = 1; }
+
+  return {
+    dims: [nx, ny, nz],
+    spacing: [ps ? ps[1] : 1, ps ? ps[0] : 1, zsp],
+    pixelType: first.pixelType,
+    data,
+    min,
+    max,
+    format: 'dicom',
+    voxelToWorld: M,
+  };
 }
 
 interface JpegLSMeta {

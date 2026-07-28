@@ -14,6 +14,22 @@ async function firstCanvasStats(page) {
     return { nonzero, sum };
   });
 }
+// Read every MPR plane (.bw-mpr WebGL canvas) via a 2D copy → {bright,sum}.
+async function mprPlaneStats(page) {
+  return page.evaluate(() => {
+    const out = [];
+    document.querySelectorAll('#stage .bw-mpr-gl').forEach((c) => {
+      if (!c.width) { out.push(null); return; }
+      const t = document.createElement('canvas'); t.width = c.width; t.height = c.height;
+      t.getContext('2d').drawImage(c, 0, 0);
+      const d = t.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let bright = 0, sum = 0;
+      for (let i = 0; i < d.length; i += 4) { const l = d[i] + d[i + 1] + d[i + 2]; if (l > 60) bright++; sum = (sum + l) % 2147483647; }
+      out.push({ bright, sum });
+    });
+    return out;
+  });
+}
 const cellCanvases = (page) => page.evaluate(() => document.querySelectorAll('.stage biewer-view canvas').length);
 const cellDivs = (page) => page.evaluate(() => document.querySelectorAll('.stage .cell').length);
 
@@ -195,24 +211,28 @@ async function volStats(page) {
   results.volume3dTumble = !!t0 && !!t1 && !!t2 && t1.sum !== t0.sum && t2.sum !== t1.sum;
   await page.screenshot({ path: 'verify-volume3d.png' });
 
-  // MPR + 3D multi-angle: one volume as 3 orthogonal planes (different axes →
-  // different pixels) + 1 interactive 3D volume, all painted in a 2×2 grid.
+  // MPR + 3D multi-angle: one oriented volume, GPU-resliced into 3 anatomical
+  // planes (.bw-mpr WebGL canvases) + 1 interactive 3D volume, in a 2×2 grid.
   await page.evaluate(() => { const it = [...document.querySelectorAll('#left .nav-item')].find((b) => b.textContent.includes('MPR + 3D')); it && it.click(); });
   await page.waitForFunction(() => {
-    const planes = [...document.querySelectorAll('#stage biewer-view canvas')];
+    const planes = [...document.querySelectorAll('#stage .bw-mpr-gl')];
     if (planes.length !== 3 || !document.querySelector('#stage biewer-volume canvas')) return false;
-    return planes.every((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let nz = 0; for (let i = 0; i < d.length; i += 4) if (d[i]) nz++; return nz > 500; });
-  }, { timeout: 40000 });
-  results.mpr = await page.evaluate(() => {
-    const planes = [...document.querySelectorAll('#stage biewer-view canvas')];
-    const sums = planes.map((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let s = 0; for (let i = 0; i < d.length; i += 4) s = (s + d[i]) % 2147483647; return s; });
-    return {
-      planes: planes.length,
-      distinctAxes: new Set(sums).size === sums.length, // axial/coronal/sagittal differ
-      hasVolume: !!document.querySelector('#stage biewer-volume canvas'),
-      labels: [...document.querySelectorAll('#stage .cell .badge')].map((b) => b.textContent.replace('×', '').split(' · ')[0]).join(','),
-    };
-  });
+    return planes.every((c) => { if (!c.width) return false; const t = document.createElement('canvas'); t.width = c.width; t.height = c.height; t.getContext('2d').drawImage(c, 0, 0); const d = t.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 60) n++; return n > 300; });
+  }, { timeout: 45000 });
+  const ps = await mprPlaneStats(page);
+  results.mpr = {
+    planes: ps.length,
+    distinctAxes: new Set(ps.map((p) => p && p.sum)).size === ps.length, // axial/coronal/sagittal reslice differently
+    hasVolume: await page.evaluate(() => !!document.querySelector('#stage biewer-volume canvas')),
+    labels: await page.evaluate(() => [...document.querySelectorAll('#stage .cell .badge')].map((b) => b.textContent.replace('×', '').split(' · ')[0]).join(',')),
+  };
+  // linked crosshair: clicking the axial plane moves the shared world point →
+  // the coronal & sagittal planes reslice (their pixels change).
+  const axBox = await page.evaluate(() => { const c = document.querySelectorAll('#stage .bw-mpr')[0]; const b = c.getBoundingClientRect(); return { x: b.x, y: b.y, w: b.width, h: b.height }; });
+  await page.mouse.click(axBox.x + axBox.w * 0.4, axBox.y + axBox.h * 0.35);
+  await new Promise((r) => setTimeout(r, 500));
+  const ps2 = await mprPlaneStats(page);
+  results.mprCrosshair = !!ps[1] && !!ps2[1] && (ps2[1].sum !== ps[1].sum || ps2[2].sum !== ps[2].sum);
   // the 3D cell in the MPR layout also paints (WebGL)
   const mprVol = await volStats(page);
   results.mprVolume = !!mprVol && mprVol.bright > 300;
@@ -241,7 +261,7 @@ async function volStats(page) {
       tag(0x0028, 0x0030, 'DS', ds('1\\1'));
       tag(0x0028, 0x0100, 'US', us(16)); tag(0x0028, 0x0103, 'US', us(0));
       const px = new Uint8Array(n * n * 2); const pv = new DataView(px.buffer);
-      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) pv.setUint16((y * n + x) * 2, z * 40 + x + y, true);
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) pv.setUint16((y * n + x) * 2, z * 40 + x * 2 + y, true); // asymmetric x/y → distinct coronal vs sagittal
       tag(0x7fe0, 0x0010, 'OW', px);
       let len = 132; for (const p of parts) len += p.length;
       const out = new Uint8Array(len); let o = 132;
@@ -260,21 +280,18 @@ async function volStats(page) {
   });
   await page.evaluate(() => window.__biewer.loadUpload(window.__testFiles));
   await page.waitForFunction(() => {
-    const planes = [...document.querySelectorAll('#stage biewer-view canvas')];
+    const planes = [...document.querySelectorAll('#stage .bw-mpr-gl')];
     if (planes.length !== 3 || !document.querySelector('#stage biewer-volume canvas')) return false;
-    return planes.every((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let nz = 0; for (let i = 0; i < d.length; i += 4) if (d[i]) nz++; return nz > 300; });
+    return planes.every((c) => { if (!c.width) return false; const t = document.createElement('canvas'); t.width = c.width; t.height = c.height; t.getContext('2d').drawImage(c, 0, 0); const d = t.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 60) n++; return n > 300; });
   }, { timeout: 30000 });
-  results.upload = await page.evaluate(() => {
-    const planes = [...document.querySelectorAll('#stage biewer-view canvas')];
-    const sums = planes.map((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let s = 0; for (let i = 0; i < d.length; i += 4) s = (s + d[i]) % 2147483647; return s; });
-    return {
-      railHasUpload: [...document.querySelectorAll('#right h3')].some((h) => h.textContent === 'Uploaded'),
-      activeExample: window.__biewer.state.activeExample,
-      planes: planes.length,
-      distinctAxes: new Set(sums).size === sums.length, // reslice → 3 different planes (not axial×3)
-      hasVolume: !!document.querySelector('#stage biewer-volume canvas'),
-    };
-  });
+  const ups = await mprPlaneStats(page);
+  results.upload = await page.evaluate(() => ({
+    railHasUpload: [...document.querySelectorAll('#right h3')].some((h) => h.textContent === 'Uploaded'),
+    activeExample: window.__biewer.state.activeExample,
+    planes: document.querySelectorAll('#stage .bw-mpr-gl').length,
+    hasVolume: !!document.querySelector('#stage biewer-volume canvas'),
+  }));
+  results.upload.distinctAxes = new Set(ups.map((p) => p && p.sum)).size === ups.length; // reslice → 3 different planes
   await page.screenshot({ path: 'verify-upload.png' });
 
   // Layout example: 2×2 grid actually mounts 4 viewports (DOM canvas count)
@@ -339,7 +356,7 @@ async function volStats(page) {
     results.realMouse.grid === '3x3' && results.realMouse.cells === 9 &&
     results.painted && results.frameChanged && results.windowLevel && results.jpegls.ok && results.cells >= 4 && results.duplicate &&
     results.volume3dPaint && results.volume3dRotate && results.volume3dMip && results.volume3dTumble &&
-    results.mpr.planes === 3 && results.mpr.distinctAxes && results.mpr.hasVolume && results.mprVolume &&
+    results.mpr.planes === 3 && results.mpr.distinctAxes && results.mpr.hasVolume && results.mprVolume && results.mprCrosshair &&
     results.uploadVolume.slices === 8 && results.uploadVolume.ordered &&
     results.upload.railHasUpload && results.upload.activeExample === 'mpr-3d' && results.upload.planes === 3 && results.upload.distinctAxes && results.upload.hasVolume &&
     results.incremental.kept0 && results.incremental.kept1 && results.incremental.kept3 && results.incremental.cell2Replaced &&

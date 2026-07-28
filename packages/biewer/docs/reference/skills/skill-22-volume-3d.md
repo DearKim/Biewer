@@ -69,6 +69,13 @@ view.setCamera({ azimuth: 0.6, elevation: 0.35, distance: 2.4 }); // reset
 - WebGL 캔버스 픽셀 판독은 2D 캔버스에 `drawImage` 후 `getImageData`(preserveDrawingBuffer 전제).
 - 소스가 바뀌면 볼륨 뷰는 **재생성**(볼륨 텍스처는 소스별 불변).
 
+## MPR (axial/coronal/sagittal) — 같은 볼륨 재사용
+
+`createVolume` 이 반환하는 `VolumeData.voxelToWorld`(NIfTI sform/qform · DICOM IOP/IPP→RAS)로
+`render/mpr.ts` + `createBiewerMPRView(el,{volume,plane,crosshair})` 가 각 평면을 셰이더에서
+화면→월드→복셀 매핑해 GPU 리슬라이스(사선 포함 해부학적 정확). `createMPRCrosshair`(월드 좌표)를
+공유해 평면 클릭 시 링크, 스크롤은 슬라이스 이동. VR 과 같은 볼륨(1회 디코드)을 공유.
+
 ## 후속
 
-오블리크/컷플레인 · transfer-function(색·불투명도 커브) 에디터 · 3D 측정 · 서피스 메시(marching cubes) · 워커 디코드 오프로드.
+VR 의 affine 방향 정렬(현재 spacing 박스) · 컷플레인 · transfer-function 에디터 · 3D/평면 측정 · 서피스 메시(marching cubes) · 워커 디코드 오프로드.

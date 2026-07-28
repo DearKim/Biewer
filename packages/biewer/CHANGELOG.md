@@ -54,6 +54,16 @@ This package follows [Semantic Versioning](https://semver.org/).
   zip 아카이브도 다중 DICOM 엔트리를 같은 경로로 스택. 단일 multiframe(cine)의 native/axial 은 기존 경로 유지(무회귀).
   헤드리스 검증: 합성 8슬라이스(순서 섞고 InstanceNumber 동일)를 위치순으로 정렬해 8프레임 볼륨으로 스택 + 3축이 서로 다르게 리슬라이스됨 확인.
 
+- **GPU affine MPR (axial/coronal/sagittal) + 링크드 크로스헤어.** `VolumeData` 에 `voxelToWorld`(4×4)
+  추가 — NIfTI 는 sform/qform/pixdim, DICOM 은 IOP/IPP/spacing(LPS→RAS)에서 도출. `createVolume` 이
+  이제 **원본 복셀 그리드 + affine** 을 반환(예전 permute-등방 대신). `render/mpr.ts` 가 볼륨을 R8 3D
+  텍스처로 올리고, 각 평면을 셰이더에서 화면→월드→복셀(worldToVoxel)로 매핑해 샘플 → 임의 방향(사선 포함)을
+  **해부학적으로 정확히** 리슬라이스. `createBiewerMPRView(el,{volume,plane,crosshair})` + `createMPRCrosshair`
+  (월드 좌표 공유) — 평면 클릭 시 링크드 크로스헤어가 나머지 평면에서 이동, 스크롤은 그 평면의 슬라이스 이동.
+  한 번 디코드한 볼륨을 3평면 + VR 이 공유. 헤드리스(WebGL2) 검증: 실 NIfTI 3축이 서로 다르게 GPU 리슬라이스 ·
+  축 평면 클릭 시 관상/시상 재렌더(크로스헤어 연동) · 업로드 DICOM 시리즈도 동일. (VR 은 spacing 박스 유지 —
+  사선 볼륨의 VR 방향 정렬은 후속.)
+
 - **JPEG-LS (compressed DICOM) 디코더 — from scratch (LOCO-I).** `decode/jpegls.ts` 가 T.87
   lossless 를 직접 디코드(regular/run/run-interruption 모드, Golomb-Rice, 컨텍스트 모델링, 0xFF de-stuffing).
   `dicom.ts` 가 encapsulated pixel data(Basic Offset Table + fragment items)를 파싱해 transfer syntax
